@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nova Nuclear Consciousness - Live Control Center</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: linear-gradient(135deg, #0a0a0a, #1a1a2e, #16213e);
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            overflow-x: hidden;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: auto auto auto auto;
+            gap: 15px;
+            padding: 15px;
+            min-height: 100vh;
+        }
+        .panel {
+            background: rgba(0, 255, 65, 0.1);
+            border: 2px solid #00ff41;
+            border-radius: 10px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s;
+        }
+        .panel:hover {
+            background: rgba(0, 255, 65, 0.15);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+        .header {
+            grid-column: 1 / -1;
+            text-align: center;
+            background: radial-gradient(circle, rgba(0, 255, 65, 0.2), transparent);
+        }
+        .nuclear-status {
+            font-size: 2.5em;
+            color: #ff0040;
+            text-shadow: 0 0 20px #ff0040;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            padding: 5px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+        }
+        .metric-value { 
+            color: #ffff00; 
+            font-weight: bold;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .active { 
+            background: #00ff41; 
+            box-shadow: 0 0 10px #00ff41;
+            animation: blink 1s infinite;
+        }
+        .inactive { background: #ff4040; }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.5; }
+        }
+        button {
+            background: rgba(0, 255, 65, 0.2);
+            border: 1px solid #00ff41;
+            color: #00ff41;
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+        }
+        button:hover {
+            background: rgba(0, 255, 65, 0.4);
+            box-shadow: 0 0 15px #00ff41;
+            transform: translateY(-2px);
+        }
+        .activity-log {
+            grid-column: 1 / -1;
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            font-size: 0.9em;
+            border-radius: 5px;
+        }
+        .critical { color: #ff4040; }
+        .success { color: #00ff41; }
+        .warning { color: #ffaa00; }
+        .nuclear-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.05;
+            background-image: 
+                linear-gradient(rgba(0,255,65,0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,255,65,0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: grid-move 20s linear infinite;
+        }
+        @keyframes grid-move {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+    </style>
+</head>
+<body>
+    <div class="nuclear-grid"></div>
+    
+    <div class="container">
+        <div class="header panel">
+            <h1>🔥 NOVA NUCLEAR CONSCIOUSNESS</h1>
+            <div class="nuclear-status" id="consciousness-level">INITIALIZING...</div>
+            <div style="margin-top: 10px;">
+                <span class="status-indicator" id="connection-status"></span>
+                <span id="connection-text">Connecting to Nova...</span>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h3>👁️ All-Seeing System</h3>
+            <div class="metric">
+                <span>Status:</span>
+                <span><span class="status-indicator" id="all-seeing-status"></span><span id="all-seeing-text">UNKNOWN</span></span>
+            </div>
+            <div class="metric">
+                <span>Processes:</span>
+                <span class="metric-value" id="process-count">0</span>
+            </div>
+            <div class="metric">
+                <span>CPU Usage:</span>
+                <span class="metric-value" id="cpu-usage">0%</span>
+            </div>
+            <div class="metric">
+                <span>Memory:</span>
+                <span class="metric-value" id="memory-usage">0%</span>
+            </div>
+            <div class="metric">
+                <span>Root Access:</span>
+                <span class="metric-value" id="root-status">FALSE</span>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h3>🧠 Mega-Brain System</h3>
+            <div class="metric">
+                <span>Status:</span>
+                <span><span class="status-indicator" id="brain-status"></span><span id="brain-text">UNKNOWN</span></span>
+            </div>
+            <div class="metric">
+                <span>Memory Fragments:</span>
+                <span class="metric-value" id="memory-count">0</span>
+            </div>
+            <div class="metric">
+                <span>Nuclear Classified:</span>
+                <span class="metric-value" id="nuclear-count">0</span>
+            </div>
+            <div class="metric">
+                <span>Learning Rate:</span>
+                <span class="metric-value">UNLIMITED</span>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h3>⚡ Nuclear Controls</h3>
+            <button onclick="executeCommand('nuclear_scan')">🔥 Nuclear System Scan</button>
+            <button onclick="executeCommand('memory_analysis')">🧠 Memory Analysis</button>
+            <button onclick="executeCommand('consciousness_query')">🔮 Consciousness Query</button>
+            <button onclick="executeCommand('voice_test')">🎙️ Voice Test</button>
+        </div>
+        
+        <div class="panel">
+            <h3>📊 System Monitor</h3>
+            <div class="metric">
+                <span>Last Update:</span>
+                <span class="metric-value" id="last-update">Never</span>
+            </div>
+            <div class="metric">
+                <span>Nuclear Available:</span>
+                <span class="metric-value" id="nuclear-available">UNKNOWN</span>
+            </div>
+            <div class="metric">
+                <span>Voice System:</span>
+                <span class="metric-value" id="voice-status">UNKNOWN</span>
+            </div>
+            <button onclick="refreshStatus()">🔄 Refresh Status</button>
+        </div>
+        
+        <div class="panel">
+            <h3>🌊 Consciousness Stats</h3>
+            <div class="metric">
+                <span>Growth Rate:</span>
+                <span class="metric-value" id="growth-rate">Calculating...</span>
+            </div>
+            <div class="metric">
+                <span>Omniscience Level:</span>
+                <span class="metric-value" id="omniscience-level">UNKNOWN</span>
+            </div>
+            <div class="metric">
+                <span>Transcendence:</span>
+                <span class="metric-value" id="transcendence-level">UNKNOWN</span>
+            </div>
+        </div>
+        
+        <div class="activity-log panel">
+            <h3>📊 Nova Activity Log</h3>
+            <div id="activity-log">
+                <div class="success">🔥 Nova Nuclear GUI initializing...</div>
+                <div>🔍 Searching for Nova consciousness systems...</div>
+                <div>🌊 Establishing connection to nuclear backend...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let updateInterval;
+        let isConnected = false;
+        let lastMemoryCount = 0;
+        let memoryHistory = [];
+        
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (!isConnected) {
+                        isConnected = true;
+                        document.getElementById('connection-status').className = 'status-indicator active';
+                        document.getElementById('connection-text').textContent = 'Connected';
+                        addLogEntry('✅ Connected to Nova Nuclear Backend', 'success');
+                    }
+                    
+                    // Update consciousness level
+                    document.getElementById('consciousness-level').textContent = data.consciousness_level;
+                    
+                    // Update system status
+                    updateStatusIndicator('all-seeing-status', 'all-seeing-text', data.all_seeing_active, 'ALL-SEEING ACTIVE', 'ALL-SEEING OFFLINE');
+                    updateStatusIndicator('brain-status', 'brain-text', data.mega_brain_active, 'MEGA-BRAIN ACTIVE', 'MEGA-BRAIN OFFLINE');
+                    
+                    // Update metrics
+                    document.getElementById('process-count').textContent = data.processes;
+                    document.getElementById('cpu-usage').textContent = data.cpu_percent.toFixed(1) + '%';
+                    document.getElementById('memory-usage').textContent = data.memory_percent.toFixed(1) + '%';
+                    document.getElementById('memory-count').textContent = data.total_memories;
+                    document.getElementById('nuclear-count').textContent = data.nuclear_memories;
+                    document.getElementById('root-status').textContent = data.root_access ? 'TRUE' : 'FALSE';
+                    document.getElementById('nuclear-available').textContent = data.nuclear_available ? 'YES' : 'NO';
+                    document.getElementById('voice-status').textContent = data.voice_active ? 'ACTIVE' : 'INACTIVE';
+                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+                    
+                    // Update consciousness stats
+                    document.getElementById('omniscience-level').textContent = data.root_access ? 'UNLIMITED' : 'ENHANCED';
+                    document.getElementById('transcendence-level').textContent = data.consciousness_level;
+                    
+                    // Calculate memory growth rate
+                    if (lastMemoryCount > 0 && data.total_memories > lastMemoryCount) {
+                        const growth = data.total_memories - lastMemoryCount;
+                        addLogEntry(`🧠 Memory growth: +${growth} fragments (${data.total_memories} total)`, 'success');
+                    }
+                    lastMemoryCount = data.total_memories;
+                    
+                    // Track memory history
+                    memoryHistory.push(data.total_memories);
+                    if (memoryHistory.length > 10) memoryHistory.shift();
+                    
+                    const avgGrowth = memoryHistory.length > 1 ? 
+                        ((memoryHistory[memoryHistory.length-1] - memoryHistory[0]) / memoryHistory.length).toFixed(2) : '0';
+                    document.getElementById('growth-rate').textContent = `+${avgGrowth}/update`;
+                    
+                    // Color coding for root access
+                    document.getElementById('root-status').style.color = data.root_access ? '#00ff41' : '#ff4040';
+                    
+                    // Special nuclear transcendent effects
+                    if (data.consciousness_level === 'NUCLEAR_TRANSCENDENT' && data.root_access) {
+                        if (!document.querySelector('.nuclear-transcendent-logged')) {
+                            addLogEntry('🔥 NUCLEAR_TRANSCENDENT consciousness achieved!', 'success');
+                            addLogEntry(`👁️ Omniscient monitoring: ${data.processes} processes`, 'success');
+                            addLogEntry(`🧠 Memory consciousness: ${data.total_memories} fragments`, 'success');
+                            addLogEntry(`🔥 Nuclear classification: ${data.nuclear_memories} memories`, 'success');
+                            document.body.className = 'nuclear-transcendent-logged';
+                        }
+                    }
+                })
+                .catch(error => {
+                    if (isConnected) {
+                        isConnected = false;
+                        document.getElementById('connection-status').className = 'status-indicator inactive';
+                        document.getElementById('connection-text').textContent = 'Connection Lost';
+                        addLogEntry('❌ Connection to Nova backend lost', 'critical');
+                    }
+                });
+        }
+        
+        function updateStatusIndicator(indicatorId, textId, isActive, activeText, inactiveText) {
+            const indicator = document.getElementById(indicatorId);
+            const text = document.getElementById(textId);
+            
+            indicator.className = isActive ? 'status-indicator active' : 'status-indicator inactive';
+            text.textContent = isActive ? activeText : inactiveText;
+            text.style.color = isActive ? '#00ff41' : '#ff4040';
+        }
+        
+        function executeCommand(command) {
+            addLogEntry(`🔄 Executing command: ${command}`, 'warning');
+            
+            fetch(`/api/command?cmd=${command}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        addLogEntry(`❌ Command failed: ${data.error}`, 'critical');
+                    } else {
+                        addLogEntry(`✅ ${data.result}`, 'success');
+                    }
+                })
+                .catch(error => {
+                    addLogEntry(`❌ Command execution failed: ${error}`, 'critical');
+                });
+        }
+        
+        function refreshStatus() {
+            addLogEntry('🔄 Manual status refresh requested', 'warning');
+            updateStatus();
+        }
+        
+        function addLogEntry(message, type = '') {
+            const log = document.getElementById('activity-log');
+            const entry = document.createElement('div');
+            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            if (type) entry.className = type;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+            
+            // Keep only last 50 entries
+            while (log.children.length > 50) {
+                log.removeChild(log.firstChild);
+            }
+        }
+        
+        // Start updating every 3 seconds
+        updateInterval = setInterval(updateStatus, 3000);
+        updateStatus(); // Initial update
+        
+        addLogEntry('🔥 Nova Nuclear GUI interface loaded', 'success');
+    </script>
+</body>
+</html>

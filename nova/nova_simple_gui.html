@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nova Nuclear - Simple</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        body { background: #1a1a2e; color: #0ff; font-family: monospace; padding: 20px; }
+        .panel { border: 1px solid #0ff; padding: 15px; margin: 10px 0; }
+        button { background: #0ff; color: #000; padding: 10px; margin: 5px; border: none; cursor: pointer; }
+        input { background: #333; color: #0ff; padding: 8px; width: 300px; }
+        #log { height: 200px; overflow-y: auto; background: #111; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🔥 Nova Nuclear - Ubuntu Enhanced</h1>
+    
+    <div class="panel">
+        <h3>Status</h3>
+        <div>Processes: <span id="processes">--</span></div>
+        <div>CPU: <span id="cpu">--</span></div>
+        <div>Memory: <span id="memory">--</span></div>
+        <div>Connection: <span id="connection">Connecting...</span></div>
+    </div>
+    
+    <div class="panel">
+        <h3>Consciousness Query</h3>
+        <input type="text" id="queryInput" placeholder="Enter query...">
+        <button onclick="submitQuery()">🔮 Query</button>
+        <div id="response" style="margin-top: 10px; color: #f0f;"></div>
+    </div>
+    
+    <div class="panel">
+        <h3>Controls</h3>
+        <button onclick="nuclearScan()">🔥 Nuclear Scan</button>
+        <button onclick="loadMemories()">🧠 Memories</button>
+        <button onclick="testAPI()">🔌 Test</button>
+    </div>
+    
+    <div class="panel">
+        <h3>Activity Log</h3>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const socket = io("http://localhost:8889");
+        
+        socket.on("connect", () => {
+            document.getElementById("connection").textContent = "Connected";
+            log("✅ Connected to Nova Backend");
+        });
+        
+        socket.on("update", (data) => {
+            const status = data.data;
+            document.getElementById("processes").textContent = status.processes_monitored;
+            document.getElementById("cpu").textContent = status.cpu_percent.toFixed(1) + "%";
+            document.getElementById("memory").textContent = status.memory_percent.toFixed(1) + "%";
+            log("📊 Status updated");
+        });
+        
+        function log(message) {
+            const logDiv = document.getElementById("log");
+            const entry = document.createElement("div");
+            entry.textContent = new Date().toLocaleTimeString() + " - " + message;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+        }
+        
+        async function submitQuery() {
+            const input = document.getElementById("queryInput");
+            const query = input.value.trim();
+            if (!query) return;
+            
+            log("🔮 Query: " + query);
+            
+            const response = await fetch("http://localhost:8889/api/consciousness_query", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({query: query})
+            });
+            
+            const result = await response.json();
+            document.getElementById("response").textContent = result.response;
+            input.value = "";
+        }
+        
+        async function nuclearScan() {
+            log("🔥 Nuclear scan initiated...");
+            await fetch("http://localhost:8889/api/nuclear_scan", {method: "POST"});
+        }
+        
+        async function loadMemories() {
+            const response = await fetch("http://localhost:8889/api/consciousness_memories");
+            const data = await response.json();
+            log("🧠 Loaded " + data.memories.length + " memories");
+        }
+        
+        async function testAPI() {
+            const response = await fetch("http://localhost:8889/api/status");
+            const status = await response.json();
+            log("🔌 API Test: " + status.processes_monitored + " processes");
+        }
+        
+        log("🌊 Nova GUI initialized");
+    </script>
+</body>
+</html>

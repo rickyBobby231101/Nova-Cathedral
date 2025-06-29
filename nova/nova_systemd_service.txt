@@ -1,0 +1,72 @@
+[Unit]
+Description=Nova Cathedral Foundation Daemon
+Documentation=https://github.com/chazel/nova-cathedral
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/nova
+Environment=PATH=/opt/nova/venv/bin
+Environment=PYTHONPATH=/opt/nova
+Environment=NOVA_HOME=/opt/nova
+Environment=CATHEDRAL_HOME=%h/cathedral
+
+# Main process
+ExecStart=/opt/nova/venv/bin/python /opt/nova/aeon_cathedral.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Service management
+Restart=always
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Output handling
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-cathedral
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/cathedral /tmp /opt/nova
+PrivateTmp=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+
+# Resource limits
+LimitNOFILE=1024
+LimitNPROC=64
+MemoryHigh=512M
+MemoryMax=1G
+CPUQuota=50%
+
+# Capabilities
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Network restrictions
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateNetwork=false
+
+# File system restrictions
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

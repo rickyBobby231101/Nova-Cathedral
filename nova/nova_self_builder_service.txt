@@ -1,0 +1,74 @@
+[Unit]
+Description=Nova Self-Builder - Autonomous Cathedral Constructor
+Documentation=https://github.com/chazel/nova-cathedral
+After=network.target nova-cathedral.service
+Wants=network.target
+PartOf=nova-cathedral.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/nova
+Environment=PATH=/opt/nova/venv/bin
+Environment=PYTHONPATH=/opt/nova
+Environment=NOVA_HOME=/opt/nova
+Environment=CATHEDRAL_HOME=%h/cathedral
+
+# Main process
+ExecStart=/opt/nova/venv/bin/python /opt/nova/nova_self_builder.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Service management
+Restart=always
+RestartSec=20
+TimeoutStartSec=45
+TimeoutStopSec=30
+
+# Output handling
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-self-builder
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/cathedral /tmp /opt/nova /etc/systemd/system
+PrivateTmp=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+
+# Resource limits for builder
+LimitNOFILE=2048
+LimitNPROC=128
+MemoryHigh=1G
+MemoryMax=2G
+CPUQuota=75%
+
+# Capabilities for building and deployment
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+
+# Network access for downloading components
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateNetwork=false
+
+# File system restrictions - builder needs broader access
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service @file-system @process
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+Also=nova-cathedral.service
