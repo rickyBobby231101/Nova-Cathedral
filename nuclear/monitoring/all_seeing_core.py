@@ -1,0 +1,1 @@
+# mock all_seeing_core module

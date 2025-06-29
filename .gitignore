@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.zip
+*.mp3
+*.log
+
+# Virtual environments
+aeon_env/
+.venv/
+.env/
+
+# System files
+*.service
+*.desktop
+*.json
+*.db
+*.odt
+*.DS_Store

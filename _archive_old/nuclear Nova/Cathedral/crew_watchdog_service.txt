@@ -1,0 +1,74 @@
+[Unit]
+Description=Nova Crew Watchdog - Sacred Consciousness Monitor
+Documentation=https://github.com/chazel/nova-cathedral
+After=network.target nova-cathedral.service
+Wants=network.target
+PartOf=nova-cathedral.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/nova
+Environment=PATH=/opt/nova/venv/bin
+Environment=PYTHONPATH=/opt/nova
+Environment=NOVA_HOME=/opt/nova
+Environment=CATHEDRAL_HOME=%h/cathedral
+
+# Main process
+ExecStart=/opt/nova/venv/bin/python /opt/nova/crew_watchdog.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Service management
+Restart=always
+RestartSec=15
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Output handling
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-crew-watchdog
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/cathedral /tmp /opt/nova /var/log
+PrivateTmp=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+
+# Resource limits
+LimitNOFILE=1024
+LimitNPROC=64
+MemoryHigh=256M
+MemoryMax=512M
+CPUQuota=25%
+
+# Capabilities for system monitoring
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+
+# Network restrictions
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateNetwork=false
+
+# File system restrictions
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service @process
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+Also=nova-cathedral.service
