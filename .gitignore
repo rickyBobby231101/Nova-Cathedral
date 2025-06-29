@@ -20,3 +20,5 @@ aeon_env/
 *.db
 *.odt
 *.DS_Store
+.env
+*.env
