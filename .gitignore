@@ -12,6 +12,16 @@ __pycache__/
 aeon_env/
 .venv/
 .env/
+Cathedral/nova_env/
+
+# Build artifacts (regenerate via build.sh)
+/dist/
+/build/
+/build_work/
+
+# Runtime data / historical archive (do not commit — see CLAUDE.md)
+Cathedral/cathedral/
+Cathedral/_archive/
 
 # System files
 *.service
