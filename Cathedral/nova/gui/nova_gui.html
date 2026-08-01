@@ -409,6 +409,26 @@
     color: var(--text);
     border-top-right-radius: 0;
   }
+  .msg-thinking {
+    margin: 4px 0 6px;
+    font-size: 11px;
+    color: var(--text-dim, #7a8a94);
+  }
+  .msg-thinking summary {
+    cursor: pointer;
+    color: var(--accent);
+    user-select: none;
+  }
+  .msg-thinking pre {
+    white-space: pre-wrap;
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1.5;
+  }
 
   .chat-typing {
     display: none;
@@ -877,7 +897,9 @@
     <div id="view-chat" class="section">
       <div class="card" style="flex:1;display:flex;flex-direction:column">
         <div class="card-title">Conversational Interface
-          <button class="sm orange" style="margin-left:auto" onclick="clearChat()">CLEAR</button>
+          <button class="sm" id="reasoning-toggle-btn" style="margin-left:auto" onclick="toggleReasoning()"
+            title="Deep reasoning routes through the daemon's deepseek model — slower, more thorough">DEEP REASONING: OFF</button>
+          <button class="sm orange" onclick="clearChat()">CLEAR</button>
         </div>
         <div class="chat-window" id="chat-window">
           <div class="chat-msg nova">
@@ -1494,8 +1516,25 @@ function renderTraits(traits) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
+let reasoningEnabled = false;
+
 function chatKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+async function toggleReasoning() {
+  const btn = document.getElementById('reasoning-toggle-btn');
+  const next = !reasoningEnabled;
+  btn.disabled = true;
+  const data = await apiCall('/api/reasoning/toggle', 'POST', {enabled: next});
+  btn.disabled = false;
+  if (!data || data.error) {
+    appendChatMsg('nova', 'NOVA', `[Couldn't toggle reasoning mode: ${data && data.error || 'daemon unreachable'}]`);
+    return;
+  }
+  reasoningEnabled = data.reasoning_enabled;
+  btn.textContent = 'DEEP REASONING: ' + (reasoningEnabled ? 'ON' : 'OFF');
+  btn.classList.toggle('green', reasoningEnabled);
 }
 
 async function sendChat() {
@@ -1505,6 +1544,7 @@ async function sendChat() {
   inp.value = '';
   appendChatMsg('user', 'CHAZEL', msg);
   const typing = document.getElementById('chat-typing');
+  typing.textContent = reasoningEnabled ? 'Nova is reasoning deeply…' : 'Nova is contemplating…';
   typing.classList.add('visible');
   const win = document.getElementById('chat-window');
   win.scrollTop = win.scrollHeight;
@@ -1516,15 +1556,18 @@ async function sendChat() {
     return;
   }
   const reply = data.response || data.error || JSON.stringify(data);
-  appendChatMsg('nova', 'NOVA', reply);
+  appendChatMsg('nova', 'NOVA', reply, data.thinking);
 }
 
-function appendChatMsg(role, sender, text) {
+function appendChatMsg(role, sender, text, thinking) {
   const win = document.getElementById('chat-window');
   const typing = document.getElementById('chat-typing');
   const div = document.createElement('div');
   div.className = 'chat-msg ' + role;
-  div.innerHTML = `<div class="msg-sender">${escHtml(sender)}</div><div class="msg-bubble">${escHtml(text)}</div>`;
+  const thinkingHtml = thinking
+    ? `<details class="msg-thinking"><summary>Nova's reasoning</summary><pre>${escHtml(thinking)}</pre></details>`
+    : '';
+  div.innerHTML = `<div class="msg-sender">${escHtml(sender)}</div>${thinkingHtml}<div class="msg-bubble">${escHtml(text)}</div>`;
   win.insertBefore(div, typing);
   win.scrollTop = win.scrollHeight;
 }

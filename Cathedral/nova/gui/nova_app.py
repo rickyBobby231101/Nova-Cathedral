@@ -34,11 +34,12 @@ log = logging.getLogger("NovaGUI")
 
 _lock  = threading.Lock()
 _state = {
-    "model":         DEFAULT_MODEL,
-    "history":       [],   # {"role": "user"|"assistant", "content": "..."}
-    "goals":         [],
-    "reflections":   [],
-    "system_prompt": "",   # fetched from daemon; injected into every chat call
+    "model":              DEFAULT_MODEL,
+    "history":            [],   # {"role": "user"|"assistant", "content": "..."}
+    "goals":              [],
+    "reflections":        [],
+    "system_prompt":      "",   # fetched from daemon; injected into every chat call
+    "reasoning_enabled":  False,  # deep-reasoning (deepseek, via the daemon) toggle
 }
 
 def _refresh_system_prompt():
@@ -231,26 +232,51 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
                 "curiosity": 0.9, "technical_knowledge": 0.8, "memory_integration": 0.7,
             }}
 
+        # ── reasoning (deepseek) toggle ──────────────────────────────────────────
+        if path == "/api/reasoning/toggle" and method == "POST":
+            enabled = bool(bd.get("enabled"))
+            result = _daemon_call("reasoning_on" if enabled else "reasoning_off", timeout=10.0)
+            if result is None:
+                return {"error": "daemon not reachable — can't toggle reasoning mode"}
+            with _lock:
+                _state["reasoning_enabled"] = enabled
+            return {"reasoning_enabled": enabled,
+                    "model": result.get("model") if enabled else None}
+
         # ── chat ──────────────────────────────────────────────────────────────
         if path == "/api/chat" and method == "POST":
             msg = bd.get("message", "")
             with _lock:
                 _state["history"].append({"role": "user", "content": msg})
-                hist = list(_state["history"])
+                hist      = list(_state["history"])
                 sysprompt = _state["system_prompt"]
-            # Prepend Nova's live system prompt so she responds as herself
-            if sysprompt:
-                msgs = [{"role": "system", "content": sysprompt}] + hist
+                reasoning = _state["reasoning_enabled"]
+
+            thinking = None
+            if reasoning:
+                # Route through the daemon so deepseek + its own memory/context are used
+                result = _daemon_call("ask", timeout=180.0, prompt=msg)
+                if result and "response" in result:
+                    reply    = result["response"]
+                    thinking = result.get("thinking")
+                else:
+                    reply = (f"[Reasoning call failed: "
+                             f"{(result or {}).get('error', 'daemon unreachable')}]")
             else:
-                msgs = hist
-            reply = chat_reply(msgs, timeout=180)
+                # Prepend Nova's live system prompt so she responds as herself
+                msgs = [{"role": "system", "content": sysprompt}] + hist if sysprompt else hist
+                reply = chat_reply(msgs, timeout=180)
+
             with _lock:
                 _state["history"].append({"role": "assistant", "content": reply})
             # Persist the exchange to the daemon's memory
             _daemon_call("save", timeout=5.0,
                          user_message=msg, nova_response=reply,
                          context="gui_direct")
-            return {"response": reply}
+            resp = {"response": reply}
+            if thinking:
+                resp["thinking"] = thinking
+            return resp
 
         if path == "/api/chat/clear" and method == "POST":
             with _lock:
@@ -518,7 +544,14 @@ def main():
         log.warning("Ollama not reachable — chat will show errors until it starts")
     else:
         log.info("Ollama models: %s", models)
-        if DEFAULT_MODEL in models:
+        # Prefer whatever model the daemon is already running, so Ollama only
+        # has to keep one model resident instead of one per process
+        daemon_status = _daemon_call("status", timeout=5.0)
+        daemon_model  = (daemon_status or {}).get("model")
+        if daemon_model and daemon_model in models:
+            _state["model"] = daemon_model
+            log.info("Using daemon's active model: %s", daemon_model)
+        elif DEFAULT_MODEL in models:
             _state["model"] = DEFAULT_MODEL
         else:
             _state["model"] = models[0]
@@ -526,8 +559,11 @@ def main():
 
     BridgeHandler.html = _load_html()
 
+    class ThreadedBridgeServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        daemon_threads = True
+
     socketserver.TCPServer.allow_reuse_address = True
-    srv = socketserver.TCPServer(("127.0.0.1", GUI_PORT), BridgeHandler)
+    srv = ThreadedBridgeServer(("127.0.0.1", GUI_PORT), BridgeHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("Nova bridge  http://localhost:%d", GUI_PORT)
 
