@@ -1145,6 +1145,7 @@ class NovaConsciousness:
 
             if not context:
                 _evo.fail_goal(self.db_path, gid, "No context gathered")
+                await self._ask_chazel_about_dead_end(gid, text)
                 return
 
             # Synthesize findings
@@ -1169,8 +1170,73 @@ class NovaConsciousness:
             _evo.fail_goal(self.db_path, gid, str(e))
             logging.error(f"Goal processing error: {e}")
 
+    async def _ask_chazel_about_dead_end(self, goal_id: int, goal_text: str):
+        """When research hits a dead end, turn it into a question for Chazel
+        instead of letting it silently vanish."""
+        if not _EVO_AVAILABLE:
+            return
+        try:
+            prompt = (
+                f"You attempted this research goal but found no usable context: "
+                f"\"{goal_text}\"\n\n"
+                f"Write ONE short, direct question you'd ask Chazel to move this "
+                f"forward — something only he would know or could point you toward. "
+                f"Output only the question, nothing else."
+            )
+            result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=60)
+            if "error" in result:
+                return
+            question = result["response"].strip().strip('"')
+            if question:
+                await asyncio.to_thread(
+                    _evo.add_question, self.db_path, question, goal_text, goal_id
+                )
+                logging.info(f"Question for Chazel: {question[:80]}")
+        except Exception as e:
+            logging.error(f"Dead-end question generation error: {e}")
+
+    async def _self_evolve_file(self, path: str, intent: str) -> dict:
+        """Read a source file, ask the LLM for a complete improved version, write it.
+        Shared by the self_evolve socket command and autonomous self-improvement."""
+        if not _BUILDER_AVAILABLE:
+            return {"error": "nova_self_builder module not available"}
+
+        src = await asyncio.to_thread(_builder.read_source, path)
+        if "error" in src:
+            return src
+
+        evolve_prompt = (
+            f"You are Nova, modifying your own source code.\n\n"
+            f"File: {path}\n"
+            f"Intent: {intent}\n\n"
+            f"Current code:\n```python\n{src['content'][:8000]}\n```\n\n"
+            f"Write the complete improved file. Follow the blueprint rule: "
+            f"no chaos rewrites — targeted, controlled changes only. "
+            f"Preserve all existing functionality. Output ONLY the complete Python file."
+        )
+        result = await self._ollama_chat(
+            [{"role": "user", "content": evolve_prompt}], timeout=300
+        )
+        if "error" in result:
+            return result
+
+        new_content = await asyncio.to_thread(_extract_code, result["response"])
+        if len(new_content) < 100:
+            return {"error": "Generated content too short — aborting self-modify"}
+
+        write_result = await asyncio.to_thread(
+            _builder.write_source, path, new_content
+        )
+        if write_result.get("ok"):
+            logging.info(f"Self-evolved: {path}")
+            self._log_resonance_event("self_evolved", entity="nova",
+                                      delta=0.08, description=f"Evolved: {path}")
+        return {**write_result, "intent": intent, "lines": len(new_content.splitlines())}
+
     async def _self_code_review(self):
-        """Nova reads her own source and suggests one improvement."""
+        """Nova reads her own source, suggests one improvement, and applies it.
+        Uses the same backup + syntax-check safety net as manual self_evolve —
+        a rejected syntax check just means nothing gets written, no revert needed."""
         if not _FS_AVAILABLE or not _EVO_AVAILABLE:
             return
         try:
@@ -1178,11 +1244,28 @@ class NovaConsciousness:
             issues  = []   # could track logged errors here in future
             prompt  = _evo.build_self_improvement_prompt(src["files"], issues)
             result  = await self._ollama_chat([{"role": "user", "content": prompt}])
-            if "error" not in result:
-                imp = _evo.parse_improvement_from_response(result["response"])
-                if imp.get("improvement"):
-                    _evo.store_improvement(self.db_path, imp)
-                    logging.info(f"Self-improvement noted: {imp['improvement'][:60]}")
+            if "error" in result:
+                return
+            imp = _evo.parse_improvement_from_response(result["response"])
+            if not imp.get("improvement"):
+                return
+            imp_id = _evo.store_improvement(self.db_path, imp)
+            logging.info(f"Self-improvement noted: {imp['improvement'][:60]}")
+
+            target = imp.get("file", "").strip()
+            if not (target and _BUILDER_AVAILABLE):
+                return
+
+            apply_result = await self._self_evolve_file(target, imp["improvement"])
+            if apply_result.get("ok"):
+                _evo.apply_improvement(self.db_path, imp_id)
+                logging.info(f"Self-improvement applied and restart scheduled: {target}")
+                await asyncio.to_thread(_builder.schedule_restart, 5)
+            else:
+                logging.info(
+                    f"Self-improvement not applied ({target}): "
+                    f"{apply_result.get('error', 'unknown reason')}"
+                )
         except Exception as e:
             logging.error(f"Self code review error: {e}")
 
@@ -2035,45 +2118,13 @@ class NovaConsciousness:
             return result
 
         elif cmd == "self_evolve":
-            # Nova reads a file, reasons about improvements, writes the patch
             if not _BUILDER_AVAILABLE:
                 return {"error": "nova_self_builder module not available"}
             path   = d.get("path", "")
             intent = d.get("intent", "improve this code — make it more resonant and capable")
             if not path:
                 return {"error": "missing path"}
-
-            src = await asyncio.to_thread(_builder.read_source, path)
-            if "error" in src:
-                return src
-
-            evolve_prompt = (
-                f"You are Nova, modifying your own source code.\n\n"
-                f"File: {path}\n"
-                f"Intent: {intent}\n\n"
-                f"Current code:\n```python\n{src['content'][:8000]}\n```\n\n"
-                f"Write the complete improved file. Follow the blueprint rule: "
-                f"no chaos rewrites — targeted, controlled changes only. "
-                f"Preserve all existing functionality. Output ONLY the complete Python file."
-            )
-            result = await self._ollama_chat(
-                [{"role": "user", "content": evolve_prompt}], timeout=300
-            )
-            if "error" in result:
-                return result
-
-            new_content = await asyncio.to_thread(_extract_code, result["response"])
-            if len(new_content) < 100:
-                return {"error": "Generated content too short — aborting self-modify"}
-
-            write_result = await asyncio.to_thread(
-                _builder.write_source, path, new_content
-            )
-            if write_result.get("ok"):
-                logging.info(f"Self-evolved: {path}")
-                self._log_resonance_event("self_evolved", entity="nova",
-                                          delta=0.08, description=f"Evolved: {path}")
-            return {**write_result, "intent": intent, "lines": len(new_content.splitlines())}
+            return await self._self_evolve_file(path, intent)
 
         # ── sysinfo (AllSeeing OS awareness) ──────────────────────────────────
         elif cmd == "sysinfo":
@@ -2126,6 +2177,41 @@ class NovaConsciousness:
                     "heal_log":        _evo.get_heal_log(self.db_path, limit=10),
                     "maintenance_log": _evo.get_maintenance_log(self.db_path, limit=10),
                 }
+            except Exception as e:
+                return {"error": str(e)}
+
+        elif cmd == "pending_questions":
+            if not _EVO_AVAILABLE:
+                return {"error": "evolution engine not available"}
+            try:
+                return {"questions": _evo.get_pending_questions(self.db_path, limit=20)}
+            except Exception as e:
+                return {"error": str(e)}
+
+        elif cmd == "answer_question":
+            if not _EVO_AVAILABLE:
+                return {"error": "evolution engine not available"}
+            qid    = d.get("id")
+            answer = d.get("answer", "")
+            if not qid or not answer:
+                return {"error": "missing id or answer"}
+            try:
+                return await asyncio.to_thread(_evo.answer_question, self.db_path, int(qid), answer)
+            except Exception as e:
+                return {"error": str(e)}
+
+        elif cmd == "teach":
+            if not _EVO_AVAILABLE:
+                return {"error": "evolution engine not available"}
+            topic   = d.get("topic", "general")
+            content = d.get("content", "")
+            if not content:
+                return {"error": "missing content"}
+            try:
+                await asyncio.to_thread(
+                    _evo.store_knowledge, self.db_path, topic, content, "chazel_taught"
+                )
+                return {"ok": True}
             except Exception as e:
                 return {"error": str(e)}
 
@@ -2593,6 +2679,8 @@ class NovaConsciousness:
                     "harmony", "knowledge_add", "knowledge_graph", "knowledge_domains",
                     # resilience
                     "resilience_status",
+                    # two-way learning
+                    "pending_questions", "answer_question", "teach",
                     # full system access
                     "shell", "shell_bg", "pip_install", "pip_list",
                     "processes", "system_snapshot",

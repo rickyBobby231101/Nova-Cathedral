@@ -97,7 +97,8 @@ Nova-Cathedral/
 `clear_session`, `shutdown`, `read_file`, `write_file`, `list_dir`, `search_files`,
 `grep_files`, `goals`, `add_goal`, `knowledge`, `improvements`, `list_voices`,
 `set_voice`, `download_voice`, `voice_status`, `sysinfo`, `brain_stats`,
-`code_inspect`, `code_evolve`, `resilience_status`
+`code_inspect`, `code_evolve`, `resilience_status`,
+`pending_questions`, `answer_question`, `teach`
 
 ### Plugin pattern
 

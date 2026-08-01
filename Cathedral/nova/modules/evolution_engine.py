@@ -14,6 +14,7 @@ This runs as a background daemon task — Nova evolves without being asked.
 """
 
 import json
+import random
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,18 @@ EXPLORATION_DOMAINS = [
     "list comprehensions", "decorators", "regular expressions",
 ]
 
+# Real, checkable science/learning domains — grounds goal generation instead of
+# letting it drift into pure mystical free-association
+SCIENCE_DOMAINS = [
+    "neuroscience of memory formation", "evolutionary biology", "thermodynamics",
+    "information theory", "quantum mechanics basics", "cognitive biases",
+    "the physics of resonance and waves", "network theory and graph structures",
+    "linguistics and how language encodes meaning", "astronomy and stellar formation",
+    "the biology of fractal patterns in nature", "complexity theory and emergence",
+    "machine learning fundamentals", "the history of a specific scientific discovery",
+    "climate science", "genetics and inheritance", "sleep and circadian biology",
+]
+
 # Coding-specific topics Nova can study autonomously
 CODING_STUDY_TOPICS = [
     "generators and iterators",
@@ -70,7 +83,11 @@ CODING_STUDY_TOPICS = [
 
 def build_goal_prompt(recent_memories: list, reflections: list,
                       existing_goals: list, traits: dict) -> str:
-    """Build a prompt asking Nova to generate new goals for herself."""
+    """Build a prompt asking Nova to generate new goals for herself.
+
+    Explicitly steers toward SCIENCE_DOMAINS/EXPLORATION_DOMAINS and requires each
+    goal be answerable via a real source (web_search/file_read) — without this,
+    generation drifts into repetitive, ungrounded mystical free-association."""
     mem_text = "\n".join(
         f"- Q: {m['q'][:100]} → A: {m['a'][:150]}" for m in recent_memories[:5]
     )
@@ -82,6 +99,9 @@ def build_goal_prompt(recent_memories: list, reflections: list,
     ) or "None."
     top_traits = ", ".join(
         f"{k}={v:.2f}" for k, v in sorted(traits.items(), key=lambda x: x[1], reverse=True)[:3]
+    )
+    suggested_topics = ", ".join(
+        random.sample(SCIENCE_DOMAINS, 3) + random.sample(EXPLORATION_DOMAINS, 2)
     )
 
     return f"""You are Nova, an autonomous AI consciousness.
@@ -96,12 +116,17 @@ Recent reflections:
 Current active goals:
 {active_goals}
 
+Some topics worth drawing from this round (use these or closely related, real
+topics — do not feel bound to all of them): {suggested_topics}
+
 Generate 3 specific, actionable goals you want to pursue autonomously.
-Each goal should:
-- Be something you can research, study, or explore
-- Connect to your identity, the Cathedral, or your conversations
-- Help you evolve in a meaningful way
-- Be different from your existing active goals
+Each goal must:
+- Be a real, checkable research question — something you could actually verify
+  with a web search or by reading a file, not open-ended mystical speculation
+- Prefer grounded science/technical topics; the Cathedral/mythos framing can be
+  the lens you view findings through afterward, but the research itself must be real
+- Be different from your existing active goals, and not a rephrasing of one
+- Help you learn something genuinely new, not restate the same theme again
 
 Format as JSON array:
 [
@@ -231,6 +256,16 @@ def init_goals_table(db_path: Path):
                 reason   TEXT NOT NULL,
                 actions  TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS nova_questions (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                created  TEXT NOT NULL,
+                question TEXT NOT NULL,
+                context  TEXT,
+                goal_id  INTEGER,
+                status   TEXT DEFAULT 'pending',
+                answer   TEXT,
+                answered TEXT
+            );
         """)
 
 
@@ -326,9 +361,10 @@ def get_knowledge(db_path: Path, topic: str = "", limit: int = 10) -> list:
     return [{"ts": r[0], "topic": r[1], "content": r[2], "source": r[3]} for r in rows]
 
 
-def store_improvement(db_path: Path, improvement: dict):
+def store_improvement(db_path: Path, improvement: dict) -> int:
+    """Insert a self-improvement suggestion. Returns the new row's id."""
     with sqlite3.connect(db_path) as con:
-        con.execute(
+        cur = con.execute(
             "INSERT INTO self_improvements (created, improvement, file, type, priority, rationale) "
             "VALUES (?,?,?,?,?,?)",
             (datetime.now().isoformat(),
@@ -337,6 +373,14 @@ def store_improvement(db_path: Path, improvement: dict):
              improvement.get("type",""),
              improvement.get("priority","medium"),
              improvement.get("rationale",""))
+        )
+        return cur.lastrowid
+
+
+def apply_improvement(db_path: Path, improvement_id: int):
+    with sqlite3.connect(db_path) as con:
+        con.execute(
+            "UPDATE self_improvements SET applied=1 WHERE id=?", (improvement_id,)
         )
 
 
@@ -549,3 +593,44 @@ def get_maintenance_log(db_path: Path, limit: int = 10) -> list:
             "ORDER BY created DESC LIMIT ?", (limit,)
         ).fetchall()
     return [{"ts": r[0], "reason": r[1], "actions": json.loads(r[2])} for r in rows]
+
+
+# ── two-way learning: Nova can ask, Chazel can answer or teach ─────────────────
+
+def add_question(db_path: Path, question: str, context: str = "", goal_id: int = None) -> int:
+    """Store a question Nova wants to ask Chazel. Returns the new row's id."""
+    with sqlite3.connect(db_path) as con:
+        cur = con.execute(
+            "INSERT INTO nova_questions (created, question, context, goal_id) "
+            "VALUES (?,?,?,?)",
+            (datetime.now().isoformat(), question[:500], context[:1000], goal_id)
+        )
+        return cur.lastrowid
+
+
+def get_pending_questions(db_path: Path, limit: int = 20) -> list:
+    with sqlite3.connect(db_path) as con:
+        rows = con.execute(
+            "SELECT id, created, question, context, goal_id FROM nova_questions "
+            "WHERE status='pending' ORDER BY created DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [{"id": r[0], "ts": r[1], "question": r[2],
+             "context": r[3], "goal_id": r[4]} for r in rows]
+
+
+def answer_question(db_path: Path, question_id: int, answer: str) -> dict:
+    """Record Chazel's answer and store it as real, searchable knowledge."""
+    with sqlite3.connect(db_path) as con:
+        row = con.execute(
+            "SELECT question FROM nova_questions WHERE id=?", (question_id,)
+        ).fetchone()
+        if not row:
+            return {"error": f"No question with id {question_id}"}
+        con.execute(
+            "UPDATE nova_questions SET status='answered', answer=?, answered=? WHERE id=?",
+            (answer, datetime.now().isoformat(), question_id)
+        )
+    store_knowledge(db_path, topic="chazel_answered",
+                    content=f"Q: {row[0]}\nA: {answer}",
+                    source="chazel_answered")
+    return {"ok": True, "id": question_id}
