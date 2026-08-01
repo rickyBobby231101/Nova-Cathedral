@@ -13,6 +13,7 @@ aeon_env/
 .venv/
 .env/
 Cathedral/nova_env/
+_archive/opt_nova_backup_20260731/nova/venv/
 
 # Build artifacts (regenerate via build.sh)
 /dist/

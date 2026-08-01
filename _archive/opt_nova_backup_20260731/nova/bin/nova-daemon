@@ -1,0 +1,38 @@
+#!/bin/bash
+set -e
+
+NOVA_VENV="/opt/nova/venv"
+NOVA_DAEMON="/opt/nova/bin/nova_production_daemon.py"
+
+# Debug output
+echo "Nova daemon wrapper starting..." >&2
+echo "Virtual env: $NOVA_VENV" >&2
+echo "Daemon script: $NOVA_DAEMON" >&2
+
+# Check if files exist
+if [[ ! -f "$NOVA_DAEMON" ]]; then
+    echo "Error: Daemon file not found: $NOVA_DAEMON" >&2
+    exit 1
+fi
+
+if [[ ! -f "$NOVA_VENV/bin/python3" ]]; then
+    echo "Error: Python virtual environment not found: $NOVA_VENV/bin/python3" >&2
+    exit 1
+fi
+
+if [[ ! -f "$NOVA_VENV/bin/activate" ]]; then
+    echo "Error: Virtual environment activate script not found: $NOVA_VENV/bin/activate" >&2
+    exit 1
+fi
+
+# Activate virtual environment
+echo "Activating virtual environment..." >&2
+source "$NOVA_VENV/bin/activate"
+
+# Verify Python works
+echo "Testing Python..." >&2
+python3 --version >&2
+
+# Run daemon with all arguments
+echo "Starting Nova daemon..." >&2
+exec python3 "$NOVA_DAEMON" "$@"

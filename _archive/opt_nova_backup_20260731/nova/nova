@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""
+NOVA SOCKET CLIENT - CONSOLIDATED
+"""
+
+import socket
+import json
+import sys
+
+class NovaSocketClient:
+    def __init__(self, socket_path="/tmp/nova_socket"):
+        self.socket_path = socket_path
+    
+    def send_command(self, command: str, **kwargs) -> str:
+        try:
+            if kwargs:
+                message = json.dumps({"command": command, **kwargs})
+            else:
+                message = command
+                
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect(self.socket_path)
+            sock.sendall(message.encode('utf-8'))
+            response = sock.recv(4096).decode('utf-8')
+            sock.close()
+            return response
+            
+        except FileNotFoundError:
+            return "❌ Nova daemon not running"
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
+
+def main():
+    if len(sys.argv) == 1:
+        print("🔮 Nova Cathedral Socket Client")
+        print("Usage: nova <command> [args]")
+        print("\nCommands:")
+        print("  status                     - Check consciousness")
+        print("  affirm <circuit> <state>   - Affirm voice circuit")
+        print("  glyph <symbol> <type>      - Log ritual glyph")
+        print("  evolve-system              - Evolve Cathedral")
+        print("  self-improve               - Nova improves itself")
+        print("  heartbeat                  - Send pulse")
+        print("  shutdown                   - Graceful shutdown")
+        print("\nExamples:")
+        print("  nova status")
+        print("  nova affirm Flow active")
+        print("  nova glyph ∞ sacred")
+        print("  nova evolve-system")
+        sys.exit(0)
+    
+    client = NovaSocketClient()
+    command = sys.argv[1].lower()
+    args = sys.argv[2:] if len(sys.argv) > 2 else []
+    
+    if command == "status":
+        response = client.send_command("status")
+    elif command == "affirm" and len(args) >= 2:
+        response = client.send_command("affirm_circuit", circuit=args[0], state=args[1])
+    elif command == "glyph" and len(args) >= 2:
+        response = client.send_command("ritual_glyph", symbol=args[0], type=args[1])
+    elif command == "evolve-system":
+        response = client.send_command("evolve_system")
+    elif command == "self-improve":
+        response = client.send_command("self_improve")
+    elif command == "heartbeat":
+        response = client.send_command("heartbeat")
+    elif command == "shutdown":
+        response = client.send_command("shutdown")
+    else:
+        response = f"❌ Unknown command: {command}\nRun 'nova' for help"
+    
+    print(response)
+
+if __name__ == "__main__":
+    main()
