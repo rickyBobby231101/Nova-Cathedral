@@ -218,6 +218,19 @@ def init_goals_table(db_path: Path):
                 rationale   TEXT,
                 applied     INTEGER DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS heal_log (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                created  TEXT NOT NULL,
+                trigger  TEXT NOT NULL,
+                actions  TEXT NOT NULL,
+                ok       INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS maintenance_log (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                created  TEXT NOT NULL,
+                reason   TEXT NOT NULL,
+                actions  TEXT NOT NULL
+            );
         """)
 
 
@@ -335,3 +348,204 @@ def get_improvements(db_path: Path, limit: int = 10) -> list:
         ).fetchall()
     return [{"ts": r[0], "improvement": r[1], "file": r[2], "type": r[3],
              "priority": r[4], "rationale": r[5], "applied": bool(r[6])} for r in rows]
+
+
+# ── resilience: auto-heal on evolution-cycle errors ─────────────────────────────
+# Ported from an earlier prototype (/opt/nova/nova_evolution_engine.py), rewritten
+# as bounded, sandboxed-safe actions for the current user-service daemon — no sudo,
+# no arbitrary package installs, no self-deploying services.
+
+def _heal_clear_stale_temp(cathedral_path: Path) -> str:
+    """Remove stray .tmp files left behind under the cathedral tree."""
+    removed = 0
+    for p in cathedral_path.rglob("*.tmp"):
+        try:
+            p.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return f"cleared {removed} stale .tmp file(s)"
+
+
+def _heal_reset_db_connections(db_path: Path) -> str:
+    """Open and immediately close a fresh connection to clear a wedged/locked handle."""
+    con = sqlite3.connect(db_path, timeout=5)
+    con.execute("PRAGMA quick_check")
+    con.close()
+    return "db connection reset ok"
+
+
+def _heal_vacuum_db(db_path: Path) -> str:
+    con = sqlite3.connect(db_path, timeout=10)
+    con.execute("VACUUM")
+    con.close()
+    return "db vacuumed"
+
+
+# Ordered, bounded recovery steps — each isolated so one failing step doesn't
+# block the rest. Intentionally small: this is triage, not self-repair.
+_HEAL_STEPS = [
+    ("clear_stale_temp",       lambda db_path, cathedral_path: _heal_clear_stale_temp(cathedral_path)),
+    ("reset_db_connections",   lambda db_path, cathedral_path: _heal_reset_db_connections(db_path)),
+]
+
+
+def attempt_auto_heal(db_path: Path, cathedral_path: Path, trigger: str) -> dict:
+    """
+    Run the bounded recovery chain after an evolution-cycle exception.
+    Returns {"actions": [...], "ok": bool} and logs to heal_log.
+    """
+    actions = []
+    ok = True
+    for name, step in _HEAL_STEPS:
+        try:
+            result = step(db_path, cathedral_path)
+            actions.append({"step": name, "ok": True, "result": result})
+        except Exception as e:
+            ok = False
+            actions.append({"step": name, "ok": False, "error": str(e)})
+
+    try:
+        with sqlite3.connect(db_path) as con:
+            con.execute(
+                "INSERT INTO heal_log (created, trigger, actions, ok) VALUES (?,?,?,?)",
+                (datetime.now().isoformat(), trigger[:300], json.dumps(actions), int(ok))
+            )
+    except Exception:
+        pass  # logging the heal attempt must never itself raise
+
+    return {"actions": actions, "ok": ok}
+
+
+def get_heal_log(db_path: Path, limit: int = 10) -> list:
+    with sqlite3.connect(db_path) as con:
+        rows = con.execute(
+            "SELECT created, trigger, actions, ok FROM heal_log "
+            "ORDER BY created DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [{"ts": r[0], "trigger": r[1], "actions": json.loads(r[2]),
+             "ok": bool(r[3])} for r in rows]
+
+
+# ── resilience: resource-triggered maintenance ──────────────────────────────────
+# Reuses AllSeeingCore's existing CPU/RAM/disk snapshot (plugins/all_seeing_core.py)
+# rather than re-reading psutil — this module only decides what to DO about pressure.
+
+RESOURCE_THRESHOLDS = {
+    "disk_percent": 90.0,
+    "ram_percent":  92.0,
+}
+LOG_ROTATE_MAX_BYTES  = 20 * 1024 * 1024   # 20MB
+VOICE_CACHE_MAX_BYTES = 100 * 1024 * 1024  # 100MB
+DB_VACUUM_MIN_HOURS   = 24                 # don't VACUUM more than once/day
+
+
+def check_resource_pressure(snapshot: dict, thresholds: dict = None) -> dict:
+    """Pure check against an existing AllSeeingCore.snapshot() — no new OS reads."""
+    thresholds = thresholds or RESOURCE_THRESHOLDS
+    pressure = {}
+    for key, limit in thresholds.items():
+        value = snapshot.get(key)
+        if isinstance(value, (int, float)) and value >= limit:
+            pressure[key] = value
+    return pressure
+
+
+def _rotate_log_if_large(log_path: Path, max_bytes: int) -> str | None:
+    if not log_path.exists() or log_path.stat().st_size < max_bytes:
+        return None
+    rotated = log_path.with_suffix(log_path.suffix + ".1")
+    rotated.unlink(missing_ok=True)
+    log_path.rename(rotated)
+    log_path.touch()
+    return f"rotated {log_path.name} ({max_bytes // 1_000_000}MB+)"
+
+
+def _prune_voice_cache_if_large(cache_dir: Path, max_bytes: int) -> str | None:
+    if not cache_dir.exists():
+        return None
+    files = sorted(cache_dir.glob("*"), key=lambda p: p.stat().st_mtime)
+    total = sum(f.stat().st_size for f in files if f.is_file())
+    if total < max_bytes:
+        return None
+    freed = 0
+    pruned = 0
+    for f in files:
+        if total - freed < max_bytes:
+            break
+        if f.is_file():
+            size = f.stat().st_size
+            f.unlink()
+            freed += size
+            pruned += 1
+    return f"pruned {pruned} voice cache file(s), freed {freed // 1024}KB"
+
+
+def _last_vacuum_time(db_path: Path) -> datetime | None:
+    try:
+        with sqlite3.connect(db_path) as con:
+            row = con.execute(
+                "SELECT created FROM maintenance_log WHERE reason='db_vacuum' "
+                "ORDER BY created DESC LIMIT 1"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def run_resource_maintenance(db_path: Path, cathedral_path: Path, snapshot: dict) -> dict:
+    """
+    Check resource pressure from an existing snapshot and, if warranted, rotate
+    the daemon log, prune the voice cache, and/or VACUUM the DB. Logs to
+    maintenance_log regardless of whether pressure was found, for visibility.
+    """
+    pressure = check_resource_pressure(snapshot)
+    actions = []
+
+    if pressure:
+        log_action = _rotate_log_if_large(
+            cathedral_path / "logs" / "nova_cathedral.log", LOG_ROTATE_MAX_BYTES
+        )
+        if log_action:
+            actions.append(log_action)
+
+        cache_action = _prune_voice_cache_if_large(
+            cathedral_path / "voice_cache", VOICE_CACHE_MAX_BYTES
+        )
+        if cache_action:
+            actions.append(cache_action)
+
+    last_vacuum = _last_vacuum_time(db_path)
+    due_for_vacuum = (
+        last_vacuum is None
+        or (datetime.now() - last_vacuum).total_seconds() > DB_VACUUM_MIN_HOURS * 3600
+    )
+    if pressure.get("disk_percent") and due_for_vacuum:
+        try:
+            _heal_vacuum_db(db_path)
+            actions.append("db vacuumed")
+        except Exception as e:
+            actions.append(f"db vacuum failed: {e}")
+
+    reason = "db_vacuum" if "db vacuumed" in actions else (
+        "pressure:" + ",".join(pressure) if pressure else "routine_check"
+    )
+    try:
+        with sqlite3.connect(db_path) as con:
+            con.execute(
+                "INSERT INTO maintenance_log (created, reason, actions) VALUES (?,?,?)",
+                (datetime.now().isoformat(), reason, json.dumps(actions))
+            )
+    except Exception:
+        pass
+
+    return {"pressure": pressure, "actions": actions}
+
+
+def get_maintenance_log(db_path: Path, limit: int = 10) -> list:
+    with sqlite3.connect(db_path) as con:
+        rows = con.execute(
+            "SELECT created, reason, actions FROM maintenance_log "
+            "ORDER BY created DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [{"ts": r[0], "reason": r[1], "actions": json.loads(r[2])} for r in rows]

@@ -1046,10 +1046,36 @@ class NovaConsciousness:
                     logging.info(f"Autonomous code study: {topic}")
                     await self._code_study(topic)
 
+                # ── resource-triggered maintenance every 15 cycles ────────────
+                if cycle % 15 == 0:
+                    await self._resource_maintenance()
+
             except Exception as e:
                 logging.error(f"Autonomous evolution error: {e}")
+                if _EVO_AVAILABLE:
+                    try:
+                        heal = await asyncio.to_thread(
+                            _evo.attempt_auto_heal, self.db_path, self.cathedral_path, str(e)
+                        )
+                        logging.info(f"Auto-heal ran: {heal['actions']}")
+                    except Exception as heal_err:
+                        logging.error(f"Auto-heal itself failed: {heal_err}")
 
             await asyncio.sleep(self._evo_cycle_mins * 60)
+
+    async def _resource_maintenance(self):
+        """Check for CPU/RAM/disk pressure and act: log rotation, cache pruning, DB vacuum."""
+        if not (_EVO_AVAILABLE and self.all_seeing):
+            return
+        try:
+            snapshot = await asyncio.to_thread(self.all_seeing.snapshot)
+            report = await asyncio.to_thread(
+                _evo.run_resource_maintenance, self.db_path, self.cathedral_path, snapshot
+            )
+            if report["actions"]:
+                logging.info(f"Resource maintenance: {report['actions']}")
+        except Exception as e:
+            logging.error(f"Resource maintenance error: {e}")
 
     async def _generate_goals(self):
         """Ask Nova to generate new goals for herself."""
@@ -2092,6 +2118,17 @@ class NovaConsciousness:
                 "history": history,
             }
 
+        elif cmd == "resilience_status":
+            if not _EVO_AVAILABLE:
+                return {"error": "evolution engine not available"}
+            try:
+                return {
+                    "heal_log":        _evo.get_heal_log(self.db_path, limit=10),
+                    "maintenance_log": _evo.get_maintenance_log(self.db_path, limit=10),
+                }
+            except Exception as e:
+                return {"error": str(e)}
+
         # ── entities ──────────────────────────────────────────────────────────
         elif cmd == "entities":
             try:
@@ -2554,6 +2591,8 @@ class NovaConsciousness:
                     "agent_ask", "council_ask", "entity_memories", "entity_list",
                     # harmony / rose cathedral
                     "harmony", "knowledge_add", "knowledge_graph", "knowledge_domains",
+                    # resilience
+                    "resilience_status",
                     # full system access
                     "shell", "shell_bg", "pip_install", "pip_list",
                     "processes", "system_snapshot",
