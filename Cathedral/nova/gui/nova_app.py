@@ -16,6 +16,11 @@ OLLAMA        = "http://localhost:11434"
 DEFAULT_MODEL = "gemma3:4b"
 DAEMON_SOCKET = "/tmp/nova_socket"
 
+NEURONODE_DIR    = HOME / "neuronode"
+NEURONODE_PYTHON = NEURONODE_DIR / ".venv" / "bin" / "python"
+NEURONODE_STATUS = NEURONODE_DIR / "checkpoints" / "status.json"
+NEURONODE_CORPUS = NEURONODE_DIR / "corpus"
+
 # ── logging ───────────────────────────────────────────────────────────────────
 
 LOG_DIR = HOME / "Nova-Cathedral" / "Cathedral" / "logs"
@@ -447,6 +452,48 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/bridge/send" and method == "POST":
             return {"status": "no bridge in direct mode"}
+
+        # ── neuronode (local from-scratch transformer) ──────────────────────────
+        if path == "/api/neuronode/status":
+            status = {}
+            if NEURONODE_STATUS.exists():
+                try:
+                    status = json.loads(NEURONODE_STATUS.read_text())
+                except Exception as e:
+                    status = {"error": f"couldn't read status.json: {e}"}
+            corpus_files = sorted(NEURONODE_CORPUS.glob("*.txt")) if NEURONODE_CORPUS.exists() else []
+            return {
+                "training": status,
+                "corpus": {
+                    "files": [f.name for f in corpus_files],
+                    "file_count": len(corpus_files),
+                    "total_chars": sum(f.stat().st_size for f in corpus_files),
+                },
+                "checkpoint_exists": (NEURONODE_DIR / "checkpoints" / "latest.pt").exists(),
+            }
+
+        if path == "/api/neuronode/sample" and method == "POST":
+            if not NEURONODE_PYTHON.exists():
+                return {"error": "neuronode venv not found at ~/neuronode/.venv"}
+            if not (NEURONODE_DIR / "checkpoints" / "latest.pt").exists():
+                return {"error": "no checkpoint yet — train neuronode first"}
+            prompt = bd.get("prompt", "\n")[:500]
+            max_new_tokens = min(int(bd.get("max_new_tokens", 200)), 500)
+            try:
+                result = subprocess.run(
+                    [str(NEURONODE_PYTHON), "generate.py",
+                     "--prompt", prompt,
+                     "--max_new_tokens", str(max_new_tokens)],
+                    cwd=str(NEURONODE_DIR),
+                    capture_output=True, text=True, timeout=90,
+                )
+                if result.returncode != 0:
+                    return {"error": result.stderr.strip()[-1000:] or "generate.py failed"}
+                return {"text": result.stdout}
+            except subprocess.TimeoutExpired:
+                return {"error": "generation timed out after 90s"}
+            except Exception as e:
+                return {"error": str(e)}
 
         # ── logs ──────────────────────────────────────────────────────────────
         if path == "/api/logs":

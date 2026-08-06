@@ -361,6 +361,22 @@ def get_knowledge(db_path: Path, topic: str = "", limit: int = 10) -> list:
     return [{"ts": r[0], "topic": r[1], "content": r[2], "source": r[3]} for r in rows]
 
 
+def _as_sqlite_scalar(value, default=""):
+    """Coerce a parsed-JSON field to something sqlite3 can bind.
+
+    Small local models occasionally emit a list/dict where a string was
+    asked for (e.g. "priority": ["high"]), which sqlite3.execute rejects
+    outright. Flatten anything non-scalar to a string instead of crashing.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (str, int, float)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 def store_improvement(db_path: Path, improvement: dict) -> int:
     """Insert a self-improvement suggestion. Returns the new row's id."""
     with sqlite3.connect(db_path) as con:
@@ -368,11 +384,11 @@ def store_improvement(db_path: Path, improvement: dict) -> int:
             "INSERT INTO self_improvements (created, improvement, file, type, priority, rationale) "
             "VALUES (?,?,?,?,?,?)",
             (datetime.now().isoformat(),
-             improvement.get("improvement",""),
-             improvement.get("file",""),
-             improvement.get("type",""),
-             improvement.get("priority","medium"),
-             improvement.get("rationale",""))
+             _as_sqlite_scalar(improvement.get("improvement","")),
+             _as_sqlite_scalar(improvement.get("file","")),
+             _as_sqlite_scalar(improvement.get("type","")),
+             _as_sqlite_scalar(improvement.get("priority","medium"), "medium"),
+             _as_sqlite_scalar(improvement.get("rationale","")))
         )
         return cur.lastrowid
 

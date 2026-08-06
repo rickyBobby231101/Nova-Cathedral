@@ -802,6 +802,9 @@
     <div class="nav-item" onclick="showView('bridge',this)">
       <span class="icon">⇌</span> Bridge
     </div>
+    <div class="nav-item" onclick="showView('neuronode',this)">
+      <span class="icon">◍</span> Neuronode
+    </div>
   </nav>
 
   <!-- ── Main area ── -->
@@ -1234,6 +1237,33 @@
       </div>
     </div>
 
+    <!-- NEURONODE -->
+    <div id="view-neuronode" class="section">
+      <div class="card">
+        <div class="card-title">Neuronode — local from-scratch transformer
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="nn-updated">—</span>
+        </div>
+        <div id="nn-status">
+          <div class="bridge-row"><span class="bridge-key">STEP</span><span class="bridge-val" id="nn-step">—</span></div>
+          <div class="bridge-row"><span class="bridge-key">PARAMS</span><span class="bridge-val" id="nn-params">—</span></div>
+          <div class="bridge-row"><span class="bridge-key">VOCAB SIZE</span><span class="bridge-val" id="nn-vocab">—</span></div>
+          <div class="bridge-row"><span class="bridge-key">TRAIN / VAL LOSS</span><span class="bridge-val" id="nn-loss">—</span></div>
+          <div class="bridge-row"><span class="bridge-key">CORPUS</span><span class="bridge-val" id="nn-corpus">—</span></div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button onclick="loadNeuronodeStatus()">REFRESH</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Sample from checkpoint</div>
+        <textarea id="nn-prompt" placeholder="Prompt to continue…" style="height:70px"></textarea>
+        <div class="btn-row">
+          <button class="green" onclick="generateNeuronodeSample()" id="nn-gen-btn">GENERATE</button>
+        </div>
+        <div class="query-result" id="nn-sample-out"></div>
+      </div>
+    </div>
+
   </main>
 
   <!-- ── Right panel ── -->
@@ -1335,6 +1365,7 @@ function showView(name, navEl) {
   if (name === 'reflections') loadReflections();
   if (name === 'memories') loadMemories();
   if (name === 'rosewindow') loadKnowledgeGraph('');
+  if (name === 'neuronode') loadNeuronodeStatus();
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1930,6 +1961,39 @@ function sendBridgeMsg() {
   result.classList.add('visible');
   apiCall('/api/bridge/send','POST',{type:'gui_message',content:msg,request:msg}).then(data => {
     result.textContent = data ? JSON.stringify(data,null,2) : 'API offline.';
+  });
+}
+
+// ── Neuronode ─────────────────────────────────────────────────────────────────
+function loadNeuronodeStatus() {
+  apiCall('/api/neuronode/status').then(data => {
+    if (!data) return;
+    const t = data.training || {};
+    document.getElementById('nn-step').textContent =
+      (t.step != null) ? `${t.step} / ${t.max_iters}` : 'not trained yet';
+    document.getElementById('nn-params').textContent =
+      t.num_params != null ? t.num_params.toLocaleString() : '—';
+    document.getElementById('nn-vocab').textContent = t.vocab_size ?? '—';
+    document.getElementById('nn-loss').textContent =
+      (t.train_loss != null) ? `${t.train_loss.toFixed(4)} / ${t.val_loss.toFixed(4)}` : '—';
+    document.getElementById('nn-corpus').textContent =
+      `${data.corpus.file_count} files, ${data.corpus.total_chars.toLocaleString()} chars`;
+    document.getElementById('nn-updated').textContent =
+      t.updated ? `updated ${new Date(t.updated*1000).toLocaleTimeString()}` : '';
+  });
+}
+
+function generateNeuronodeSample() {
+  const prompt = document.getElementById('nn-prompt').value || '\n';
+  const out    = document.getElementById('nn-sample-out');
+  const btn    = document.getElementById('nn-gen-btn');
+  btn.disabled = true;
+  out.textContent = 'Generating…';
+  out.classList.add('visible');
+  apiCall('/api/neuronode/sample','POST',{prompt, max_new_tokens:200}).then(data => {
+    btn.disabled = false;
+    if (!data) { out.textContent = 'API offline.'; return; }
+    out.textContent = data.error ? `Error: ${data.error}` : data.text;
   });
 }
 
