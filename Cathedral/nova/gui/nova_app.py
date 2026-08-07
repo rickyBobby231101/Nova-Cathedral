@@ -453,6 +453,32 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/bridge/send" and method == "POST":
             return {"status": "no bridge in direct mode"}
 
+        # ── local Bridge Walker (second Ollama model, free) ──────────────────
+        if path == "/api/bridge/walker" and method == "POST":
+            message = bd.get("message", "")
+            if not message:
+                return {"error": "missing message"}
+            result = _daemon_call("bridge_ask", timeout=180.0, message=message)
+            return result or {"error": "daemon unreachable"}
+
+        # ── real Claude bridge (actual Anthropic API — costs money) ─────────
+        if path == "/api/claude-bridge/status":
+            result = _daemon_call("claude_bridge_status", timeout=5.0)
+            return result or {"available": False, "key_configured": False}
+
+        if path == "/api/claude-bridge/ask" and method == "POST":
+            message = bd.get("message", "")
+            if not message:
+                return {"error": "missing message"}
+            result = _daemon_call("claude_bridge_ask", timeout=60.0, message=message)
+            return result or {"error": "daemon unreachable"}
+
+        # ── storyteller ───────────────────────────────────────────────────────
+        if path == "/api/story" and method == "POST":
+            theme = bd.get("theme", "")
+            result = _daemon_call("tell_story", timeout=120.0, theme=theme)
+            return result or {"error": "daemon unreachable"}
+
         # ── neuronode (local from-scratch transformer) ──────────────────────────
         if path == "/api/neuronode/status":
             status = {}

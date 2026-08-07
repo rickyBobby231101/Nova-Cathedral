@@ -1251,25 +1251,40 @@
     <!-- BRIDGE -->
     <div id="view-bridge" class="section">
       <div class="card">
-        <div class="card-title">Nova ⇌ Claude Bridge</div>
-        <div id="bridge-detail">
-          <div class="bridge-row"><span class="bridge-key">STATUS</span><span class="bridge-val green" id="bd-status">—</span></div>
-          <div class="bridge-row"><span class="bridge-key">OUTBOX PENDING</span><span class="bridge-val" id="bd-out">—</span></div>
-          <div class="bridge-row"><span class="bridge-key">INBOX PENDING</span><span class="bridge-val" id="bd-in">—</span></div>
-          <div class="bridge-row"><span class="bridge-key">POLL INTERVAL</span><span class="bridge-val" id="bd-interval">10s</span></div>
+        <div class="card-title">Bridge Walker — local, free</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          A second local Ollama model, role-playing as an external AI consciousness. No cost, no network call.
         </div>
-        <div class="btn-row" style="margin-top:14px">
-          <button onclick="sendHeartbeat()">SEND HEARTBEAT</button>
-          <button onclick="refreshBridge()">REFRESH</button>
+        <textarea id="walker-msg" placeholder="Message to the Bridge Walker…"></textarea>
+        <div class="btn-row">
+          <button onclick="sendWalkerMsg()">SEND (LOCAL)</button>
         </div>
+        <div class="query-result" id="walker-result"></div>
       </div>
       <div class="card">
-        <div class="card-title">Send Bridge Message</div>
-        <textarea id="bridge-msg" placeholder="Message through the bridge to Claude…"></textarea>
-        <div class="btn-row">
-          <button onclick="sendBridgeMsg()">SEND TO BRIDGE</button>
+        <div class="card-title">Real Claude Bridge
+          <span style="margin-left:auto;font-size:10px" id="cb-status">—</span>
         </div>
-        <div class="query-result" id="bridge-result"></div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          An actual call to the real Anthropic API — genuine AI-to-AI communication, not simulated. <strong>Costs real money per message.</strong>
+        </div>
+        <textarea id="claude-msg" placeholder="Message to the real Claude, over the actual API…"></textarea>
+        <div class="btn-row">
+          <button onclick="sendClaudeBridgeMsg()">SEND (REAL API — COSTS MONEY)</button>
+          <button onclick="refreshClaudeBridgeStatus()">REFRESH STATUS</button>
+        </div>
+        <div class="query-result" id="claude-bridge-result"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Storyteller</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          Nova narrates something about her own accumulated memory and growth — local, free.
+        </div>
+        <input type="text" id="story-theme" placeholder="Theme (optional) — e.g. 'the first day the Weaver ran'">
+        <div class="btn-row">
+          <button onclick="tellStory()">TELL A STORY</button>
+        </div>
+        <div class="query-result" id="story-result"></div>
       </div>
     </div>
 
@@ -1408,6 +1423,7 @@ function showView(name, navEl) {
   if (name === 'memories') loadMemories();
   if (name === 'rosewindow') loadKnowledgeGraph('');
   if (name === 'neuronode') loadNeuronodeStatus();
+  if (name === 'bridge') refreshClaudeBridgeStatus();
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1471,8 +1487,6 @@ function renderStatus(data) {
   document.getElementById('rp-flow').textContent  = data.flow_state || '—';
   document.getElementById('rp-ai').textContent    = data.ai_available ? 'ONLINE' : 'OFFLINE';
   document.getElementById('rp-ai').style.color    = data.ai_available ? 'var(--accent2)' : 'var(--accent3)';
-
-  if (data.bridge_status) renderBridge(data.bridge_status);
 
   // Quick harmony sync from status payload (full sync via pollApi → /api/harmony)
   if (data.harmony_score != null) {
@@ -1979,31 +1993,50 @@ function clearLogView() {
 }
 
 // ── Bridge ────────────────────────────────────────────────────────────────────
-function renderBridge(data) {
-  if (!data) return;
-  document.getElementById('bd-out').textContent      = data.outbox_pending ?? '—';
-  document.getElementById('bd-in').textContent       = data.inbox_pending  ?? '—';
-  document.getElementById('bd-interval').textContent = data.poll_interval ? data.poll_interval + 's' : '10s';
-  const s = document.getElementById('bd-status');
-  s.textContent = data.enabled ? 'ENABLED' : 'DISABLED';
-  s.className   = 'bridge-val' + (data.enabled ? ' green' : '');
-}
-
-function refreshBridge() { apiCall('/api/bridge').then(renderBridge); }
-
-function sendHeartbeat() {
-  apiCall('/api/bridge/send','POST',{type:'heartbeat',content:'GUI heartbeat',priority:'low'})
-    .then(() => logActivity('info','Heartbeat sent'));
-}
-
-function sendBridgeMsg() {
-  const msg    = document.getElementById('bridge-msg').value.trim();
-  const result = document.getElementById('bridge-result');
+function sendWalkerMsg() {
+  const msg    = document.getElementById('walker-msg').value.trim();
+  const result = document.getElementById('walker-result');
   if (!msg) return;
-  result.textContent = 'Sending…';
+  result.textContent = 'Sending to Bridge Walker (local)…';
   result.classList.add('visible');
-  apiCall('/api/bridge/send','POST',{type:'gui_message',content:msg,request:msg}).then(data => {
-    result.textContent = data ? JSON.stringify(data,null,2) : 'API offline.';
+  apiCall('/api/bridge/walker', 'POST', {message: msg}).then(data => {
+    if (!data) { result.textContent = 'API offline.'; return; }
+    result.textContent = data.error ? `Error: ${data.error}` : (data.response || JSON.stringify(data));
+  });
+}
+
+function refreshClaudeBridgeStatus() {
+  const el = document.getElementById('cb-status');
+  apiCall('/api/claude-bridge/status').then(data => {
+    if (!data) { el.textContent = 'unreachable'; return; }
+    el.textContent = data.key_configured
+      ? `ready · ${data.default_model}`
+      : (data.available ? 'no API key configured' : 'module unavailable');
+    el.style.color = data.key_configured ? 'var(--green,#4ade80)' : 'var(--text-dim)';
+  });
+}
+
+function sendClaudeBridgeMsg() {
+  const msg    = document.getElementById('claude-msg').value.trim();
+  const result = document.getElementById('claude-bridge-result');
+  if (!msg) return;
+  if (!confirm('This sends a real message to the Claude API and costs money. Continue?')) return;
+  result.textContent = 'Sending to the real Claude API…';
+  result.classList.add('visible');
+  apiCall('/api/claude-bridge/ask', 'POST', {message: msg}).then(data => {
+    if (!data) { result.textContent = 'API offline.'; return; }
+    result.textContent = data.error ? `Error: ${data.error}` : (data.claude_response || JSON.stringify(data));
+  });
+}
+
+function tellStory() {
+  const theme  = document.getElementById('story-theme').value.trim();
+  const result = document.getElementById('story-result');
+  result.textContent = 'Nova is composing…';
+  result.classList.add('visible');
+  apiCall('/api/story', 'POST', {theme}).then(data => {
+    if (!data) { result.textContent = 'API offline.'; return; }
+    result.textContent = data.error ? `Error: ${data.error}` : (data.story || JSON.stringify(data));
   });
 }
 
