@@ -11,6 +11,7 @@ gi.require_version('WebKit2', '4.1')
 from gi.repository import Gtk, WebKit2, GLib
 
 HOME          = Path.home()
+CATHEDRAL     = HOME / "cathedral"
 GUI_PORT      = 8892
 OLLAMA        = "http://localhost:11434"
 DEFAULT_MODEL = "gemma3:4b"
@@ -347,41 +348,25 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return result or {"memories": []}
 
         # ── memories ──────────────────────────────────────────────────────────
+        # Nova's real, persistent memory (daemon-backed) — not the GUI's own
+        # session-local chat history, which only ever held what was said
+        # through this GUI process and vanished on restart.
         if path == "/api/memories":
-            with _lock:
-                hist = list(_state["history"])
-            pairs = []
-            for i in range(0, len(hist) - 1, 2):
-                if hist[i]["role"] == "user" and i + 1 < len(hist):
-                    pairs.append({
-                        "question":  hist[i]["content"],
-                        "answer":    hist[i + 1]["content"],
-                        "timestamp": "",
-                        "id":        str(i // 2),
-                    })
-            search = qs.get("search", [""])[0].lower()
-            if search:
-                pairs = [p for p in pairs
-                         if search in p["question"].lower()
-                         or search in p["answer"].lower()]
-            return {"memories": pairs[-20:]}
+            search = qs.get("search", [""])[0]
+            result = (_daemon_call("recall", timeout=5.0, query=search, n=50) if search
+                     else _daemon_call("memories", timeout=5.0, n=50))
+            return result or {"memories": []}
 
         # ── reflections ───────────────────────────────────────────────────────
         if path == "/api/reflect" and method == "POST":
-            with _lock:
-                recent = list(_state["history"][-10:])
-            summary = "\n".join(f"{m['role']}: {m['content'][:120]}" for m in recent)
-            prompt  = (f"Reflect philosophically on this conversation:\n{summary}\n\n"
-                       "One paragraph, introspective.")
-            reply   = chat_reply([{"role": "user", "content": prompt}], timeout=120)
-            entry   = {"reflection": reply, "timestamp": ""}
-            with _lock:
-                _state["reflections"].append(entry)
-            return entry
+            # A real reflection is a full LLM generation — measured at ~77s
+            # under normal load, so 120s was marginal. 200s for headroom.
+            result = _daemon_call("reflect", timeout=200.0)
+            return result or {"error": "daemon unreachable"}
 
         if path == "/api/reflections":
-            with _lock:
-                return {"reflections": list(_state["reflections"])}
+            result = _daemon_call("reflections", timeout=5.0, n=30)
+            return result or {"reflections": []}
 
         # ── goals ─────────────────────────────────────────────────────────────
         # Nova's real, persistent autonomous goal system (daemon-backed) — not
@@ -448,8 +433,10 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         # ── evolution / plugins / bridge ──────────────────────────────────────
         if path == "/api/evolution":
             with _lock:
-                return {"evolution": {"stage": "active", "model": _state["model"],
-                                      "conversations": len(_state["history"]) // 2}}
+                cur = _state["model"]
+            daemon = _daemon_call("status", timeout=3.0) or {}
+            return {"evolution": {"stage": "active", "model": daemon.get("model", cur),
+                                  "conversations": daemon.get("conversations", 0)}}
 
         if path == "/api/improvements":
             result = _daemon_call("improvements", timeout=5.0)
@@ -476,11 +463,25 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("plugin_run", timeout=30.0, name=name, input=inp)
             return result or {"error": "daemon unreachable"}
 
+        # File-drop bridge (~/cathedral/bridge/) — async Claude Code <-> Nova
+        # message exchange, separate from the Bridge Walker / real Claude
+        # bridge above. Reads the actual directories rather than a hardcoded
+        # stub; genuinely empty right now (0 files either direction), but
+        # this reflects reality instead of coincidentally matching it.
         if path == "/api/bridge":
-            return {"messages": []}
-
-        if path == "/api/bridge/send" and method == "POST":
-            return {"status": "no bridge in direct mode"}
+            bridge_dir = CATHEDRAL / "bridge"
+            def _read_msgs(sub):
+                d = bridge_dir / sub
+                if not d.exists():
+                    return []
+                msgs = []
+                for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+                    try:
+                        msgs.append(json.loads(f.read_text()))
+                    except Exception:
+                        pass
+                return msgs
+            return {"messages": _read_msgs("nova_to_claude") + _read_msgs("claude_to_nova")}
 
         # ── local Bridge Walker (second Ollama model, free) ──────────────────
         if path == "/api/bridge/walker" and method == "POST":

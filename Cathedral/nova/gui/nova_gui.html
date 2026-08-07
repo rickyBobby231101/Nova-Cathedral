@@ -1785,9 +1785,9 @@ async function loadMemories(search='') {
     const item = document.createElement('div');
     item.className = 'mem-item';
     item.innerHTML = `
-      <div class="mem-content">${escHtml(m.content || m.fragment || JSON.stringify(m))}</div>
+      <div class="mem-content">${m.q ? `<strong>Q:</strong> ${escHtml(m.q)}<br><strong>A:</strong> ${escHtml(m.a || '')}` : escHtml(m.content || JSON.stringify(m))}</div>
       <div class="mem-meta">
-        <span>${m.timestamp || ''}</span>
+        <span>${m.ts || m.timestamp || ''}</span>
         ${m.category ? `<span>${escHtml(m.category)}</span>` : ''}
       </div>`;
     list.appendChild(item);
@@ -1871,7 +1871,7 @@ async function loadReflections() {
     item.innerHTML = `
       <div class="refl-content">${escHtml(r.content || '')}</div>
       <div class="refl-meta">
-        <span>${r.timestamp || ''}</span>
+        <span>${r.ts || r.timestamp || ''}</span>
         ${r.trigger ? `<span>trigger: ${escHtml(r.trigger)}</span>` : ''}
         ${r.depth    ? `<span>depth: ${r.depth}</span>` : ''}
       </div>`;
@@ -1884,9 +1884,10 @@ async function triggerReflect() {
   status.style.display = 'block';
   status.textContent = 'Triggering reflection… Nova is looking inward.';
   const data = await apiCall('/api/reflect', 'POST');
-  if (!data) { status.textContent = 'API offline — cannot trigger reflection.'; return; }
+  if (!data || data.error) { status.textContent = `API offline or error: ${data ? data.error : ''}`; return; }
   status.textContent = 'Reflection complete. Reloading…';
-  logActivity('purple', 'Nova reflected: ' + (data.reflection || '').slice(0, 80) + '…');
+  const text = data.reflection ? (data.reflection.content || '') : '';
+  logActivity('purple', 'Nova reflected: ' + text.slice(0, 80) + '…');
   setTimeout(() => { loadReflections(); status.style.display = 'none'; }, 1000);
 }
 
@@ -2037,7 +2038,7 @@ const SHELL_ROUTES = {
   goals:        ['/api/goals',        'GET'],
   reflections:  ['/api/reflections',  'GET'],
   memories:     ['/api/memories',     'GET'],
-  entities:     ['/api/entities',     'GET'],
+  entities:     ['/api/entity/list',  'GET'],
   heartbeat:    ['/api/bridge',       'GET'],
 };
 
