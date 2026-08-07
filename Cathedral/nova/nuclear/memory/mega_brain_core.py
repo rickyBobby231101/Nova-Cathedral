@@ -68,9 +68,11 @@ class MegaBrainCore:
             q_col = "question"    if "question"    in cols else "user_message"
             a_col = "answer"      if "answer"      in cols else "nova_response"
             q = f"SELECT rowid, {q_col}, {a_col}, timestamp FROM conversations"
+            params: list = []
             if cutoff:
-                q += f" WHERE timestamp >= '{cutoff}'"
-            rows = con.execute(q + " ORDER BY timestamp DESC LIMIT 500").fetchall()
+                q += " WHERE timestamp >= ?"
+                params.append(cutoff)
+            rows = con.execute(q + " ORDER BY timestamp DESC LIMIT 500", params).fetchall()
 
         scored = []
         now    = time.time()
