@@ -533,9 +533,15 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin",  "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Deliberately not sending Access-Control-Allow-Origin: * here. This
+        # server only has same-origin callers — the embedded WebKit view and
+        # a browser visiting http://localhost:8892 directly both already get
+        # same-origin requests without any CORS header at all. A wildcard
+        # would instead let *any* website open in the user's regular browser
+        # read from this API cross-origin (conversation history, goals, the
+        # neuronode subprocess trigger) purely because it's reachable on
+        # localhost — the same bug class as the disclosed Ollama CORS issue.
+        pass
 
     def log_message(self, fmt, *args):
         log.debug("HTTP " + fmt % args)
