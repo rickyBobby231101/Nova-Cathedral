@@ -1033,6 +1033,25 @@
       </div>
     </div>
 
+    <!-- HERBAL LIBRARY -->
+    <div id="view-herbal" class="section">
+      <div class="card">
+        <div class="card-title">Herbal Library
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="herbal-count">—</span>
+        </div>
+        <div class="search-row">
+          <input type="text" id="herbal-search" placeholder="Search plants, preparations, principles…" onkeydown="if(event.key==='Enter')searchHerbal()">
+          <button onclick="searchHerbal()">SEARCH</button>
+          <button onclick="loadHerbal()">ALL</button>
+        </div>
+        <div id="herbal-list"><div class="empty-state">Click ALL to browse, or search by name.</div></div>
+      </div>
+      <div class="card" id="herbal-detail-card" style="display:none">
+        <div class="card-title" id="herbal-detail-title">—</div>
+        <div id="herbal-detail-content" style="font-size:12px;line-height:1.7;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
     <!-- REFLECTIONS -->
     <div id="view-reflections" class="section">
       <div class="card">
@@ -1424,6 +1443,7 @@ function showView(name, navEl) {
   if (name === 'rosewindow') loadKnowledgeGraph('');
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
+  if (name === 'herbal') loadHerbal();
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1777,6 +1797,58 @@ async function loadMemories(search='') {
 function searchMemories() {
   const q = document.getElementById('mem-search').value.trim();
   loadMemories(q);
+}
+
+// ── Herbal Library ────────────────────────────────────────────────────────────
+let herbalNodes = [];
+
+async function loadHerbal() {
+  const list = document.getElementById('herbal-list');
+  list.innerHTML = '<div class="empty-state">Loading…</div>';
+  const data = await apiCall('/api/knowledge/graph?domain=herbal');
+  if (!data || !data.nodes) {
+    list.innerHTML = '<div class="empty-state">No herbal knowledge found or API offline.</div>';
+    return;
+  }
+  herbalNodes = data.nodes;
+  document.getElementById('herbal-count').textContent = `${herbalNodes.length} entries`;
+  renderHerbalList(herbalNodes);
+}
+
+function renderHerbalList(nodes) {
+  const list = document.getElementById('herbal-list');
+  if (!nodes.length) { list.innerHTML = '<div class="empty-state">Nothing found.</div>'; return; }
+  list.innerHTML = '';
+  nodes.slice().sort((a, b) => (a.label || '').localeCompare(b.label || '')).forEach(n => {
+    const item = document.createElement('div');
+    item.className = 'emem-item';
+    item.style.cursor = 'pointer';
+    item.innerHTML =
+      `<div class="emem-q">${escHtml(n.label || '')}</div>` +
+      `<div class="emem-a">${escHtml((n.content || '').substring(0, 140))}…</div>`;
+    item.onclick = () => showHerbalDetail(n.id, n.label);
+    list.appendChild(item);
+  });
+}
+
+function searchHerbal() {
+  const q = document.getElementById('herbal-search').value.trim().toLowerCase();
+  if (!q) { renderHerbalList(herbalNodes); return; }
+  renderHerbalList(herbalNodes.filter(n =>
+    (n.label || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q)));
+}
+
+async function showHerbalDetail(id, fallbackLabel) {
+  const card  = document.getElementById('herbal-detail-card');
+  const title = document.getElementById('herbal-detail-title');
+  const body  = document.getElementById('herbal-detail-content');
+  card.style.display = 'block';
+  title.textContent = fallbackLabel || '—';
+  body.textContent = 'Loading…';
+  const data = await apiCall(`/api/knowledge/node?id=${id}`);
+  if (!data || data.error) { body.textContent = data ? data.error : 'API offline.'; return; }
+  title.textContent = data.label;
+  body.textContent = data.content;
 }
 
 // ── Reflections ───────────────────────────────────────────────────────────────

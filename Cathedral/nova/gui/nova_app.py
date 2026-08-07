@@ -435,6 +435,13 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("knowledge_domains", timeout=5.0)
             return result or {"domains": []}
 
+        if path == "/api/knowledge/node":
+            node_id = qs.get("id", [""])[0]
+            if not node_id:
+                return {"error": "missing id"}
+            result = _daemon_call("knowledge_node", timeout=5.0, id=int(node_id))
+            return result or {"error": "daemon unreachable"}
+
         # ── evolution / plugins / bridge ──────────────────────────────────────
         if path == "/api/evolution":
             with _lock:
