@@ -166,6 +166,12 @@ except ImportError:
     _WEAVER_AVAILABLE = False
 
 try:
+    import chat_importer as _chat_importer
+    _CHAT_IMPORTER_AVAILABLE = True
+except ImportError:
+    _CHAT_IMPORTER_AVAILABLE = False
+
+try:
     from all_seeing_core import AllSeeingCore as _AllSeeing
     _ALL_SEEING_AVAILABLE = True
 except ImportError:
@@ -405,6 +411,15 @@ class NovaConsciousness:
                     ingested TEXT NOT NULL,
                     chunks   INTEGER DEFAULT 0,
                     topic    TEXT
+                );
+                CREATE TABLE IF NOT EXISTS chat_import_log (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hash     TEXT UNIQUE NOT NULL,
+                    path     TEXT NOT NULL,
+                    imported TEXT NOT NULL,
+                    turns    INTEGER DEFAULT 0,
+                    ok       INTEGER DEFAULT 0,
+                    reason   TEXT
                 );
                 CREATE TABLE IF NOT EXISTS resonance_events (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1555,6 +1570,70 @@ class NovaConsciousness:
                 logging.error(f"Feed watcher scan error: {e}")
             await asyncio.sleep(15)
 
+    # ── chat import ────────────────────────────────────────────────────────────
+
+    def _chat_import_seen(self, content_hash: str) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as con:
+                return bool(con.execute(
+                    "SELECT id FROM chat_import_log WHERE hash=?", (content_hash,)
+                ).fetchone())
+        except Exception:
+            return False
+
+    def _ingest_chat_import_file(self, path: Path) -> dict:
+        """Parse a dropped chat transcript and save each turn exactly like a
+        live conversation — mega_brain tagging, Tillagon watch, all of it.
+        Tracked by content hash, not filename: fixing and re-saving a file
+        that failed to parse is enough to get it picked up again."""
+
+        def _save(user_msg: str, ai_msg: str):
+            self.save_conversation(
+                user_msg, ai_msg, category="imported", tone="neutral",
+                context=f"imported:{path.stem}",
+            )
+
+        result = _chat_importer.import_file(path, save_fn=_save)
+        try:
+            with sqlite3.connect(self.db_path) as con:
+                con.execute(
+                    "INSERT OR IGNORE INTO chat_import_log "
+                    "(hash, path, imported, turns, ok, reason) VALUES (?,?,?,?,?,?)",
+                    (result["hash"], str(path), datetime.now().isoformat(),
+                     result["turns"], int(result["ok"]), result["reason"])
+                )
+        except Exception as e:
+            logging.warning(f"chat import log write failed: {e}")
+
+        if result["ok"]:
+            logging.info(f"Chat import: '{path.name}' — {result['turns']} turn(s) "
+                         f"adopted into memory")
+        else:
+            logging.warning(f"Chat import: '{path.name}' — {result['reason']}")
+        return result
+
+    async def chat_import_watcher_cycle(self):
+        """Background task — watches ~/cathedral/chat_import/ and adopts new
+        transcripts into Nova's memory. Same 15s cadence as the feed watcher."""
+        if not _CHAT_IMPORTER_AVAILABLE:
+            return
+        import_dir = self.cathedral_path / "chat_import"
+        import_dir.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Chat import watcher active — watching {import_dir}")
+        while self.is_awakened:
+            try:
+                for fpath in import_dir.iterdir():
+                    if not (fpath.is_file() and fpath.suffix.lower() == ".txt"
+                            and not fpath.name.startswith(".")):
+                        continue
+                    text = await asyncio.to_thread(fpath.read_text, errors="replace")
+                    content_hash = _chat_importer.file_hash(text)
+                    if not self._chat_import_seen(content_hash):
+                        await asyncio.to_thread(self._ingest_chat_import_file, fpath)
+            except Exception as e:
+                logging.error(f"Chat import watcher scan error: {e}")
+            await asyncio.sleep(15)
+
     # ── local AI bridge ───────────────────────────────────────────────────────
 
     def _bridge_model(self) -> str:
@@ -2671,6 +2750,35 @@ class NovaConsciousness:
                 return {"error": f"File not found: {fpath}"}
             return await self._ingest_feed_file(fpath)
 
+        # ── chat import ────────────────────────────────────────────────────────
+        elif cmd == "import_status":
+            import_dir = self.cathedral_path / "chat_import"
+            import_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with sqlite3.connect(self.db_path) as con:
+                    rows = con.execute(
+                        "SELECT path, imported, turns, ok, reason FROM chat_import_log "
+                        "ORDER BY imported DESC LIMIT 30"
+                    ).fetchall()
+                imported = [{"path": r[0], "ts": r[1], "turns": r[2],
+                            "ok": bool(r[3]), "reason": r[4]} for r in rows]
+                failed  = [r for r in imported if not r["ok"]]
+                pending = []
+                for f in import_dir.iterdir():
+                    if f.is_file() and f.suffix.lower() == ".txt" and not f.name.startswith("."):
+                        h = _chat_importer.file_hash(f.read_text(errors="replace"))
+                        if not self._chat_import_seen(h):
+                            pending.append(f.name)
+                return {
+                    "import_dir": str(import_dir),
+                    "imported":   imported,
+                    "failed":     failed,
+                    "pending":    pending,
+                    "watch_interval": 15,
+                }
+            except Exception as e:
+                return {"error": str(e)}
+
         # ── conversation patterns ─────────────────────────────────────────────
         elif cmd == "patterns":
             try:
@@ -2870,6 +2978,8 @@ class NovaConsciousness:
                     "code_run", "code_create", "code_library_list", "code_library_get",
                     # feed watcher
                     "feed_status", "feed_ingest",
+                    # chat import
+                    "import_status",
                     # patterns & model management
                     "patterns", "memory_density",
                     "ollama_models", "ollama_pull", "set_model",
@@ -2966,6 +3076,7 @@ class NovaConsciousness:
         asyncio.create_task(self.consciousness_reflection_cycle())
         asyncio.create_task(self.handle_connections())
         asyncio.create_task(self.feed_watcher_cycle())
+        asyncio.create_task(self.chat_import_watcher_cycle())
         if _EVO_AVAILABLE:
             asyncio.create_task(self.autonomous_evolution_cycle())
 
