@@ -469,6 +469,39 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("plugin_run", timeout=30.0, name=name, input=inp)
             return result or {"error": "daemon unreachable"}
 
+        # ── voice (TTS) ───────────────────────────────────────────────────────
+        if path == "/api/voice/status":
+            result = _daemon_call("voice_status", timeout=5.0)
+            return result or {"available": False, "engine": "none", "voice": ""}
+
+        if path == "/api/voice/list":
+            result = _daemon_call("list_voices", timeout=5.0)
+            return result or {"voices": {}}
+
+        if path == "/api/voice/set" and method == "POST":
+            name = bd.get("voice", "")
+            if not name:
+                return {"error": "missing voice"}
+            result = _daemon_call("set_voice", timeout=5.0, voice=name)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/voice/download" and method == "POST":
+            name = bd.get("voice", "")
+            if not name:
+                return {"error": "missing voice"}
+            # Fetches a ~60MB model from Hugging Face — generous timeout for slow connections.
+            result = _daemon_call("download_voice", timeout=180.0, voice=name)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/voice/speak" and method == "POST":
+            text = bd.get("text", "")
+            if not text:
+                return {"error": "missing text"}
+            # Plays through this machine's speakers — the daemon and GUI run
+            # on the same host, so this is genuinely audible, not simulated.
+            result = _daemon_call("speak", timeout=15.0, text=text)
+            return result or {"error": "daemon unreachable"}
+
         # File-drop bridge (~/cathedral/bridge/) — async Claude Code <-> Nova
         # message exchange, separate from the Bridge Walker / real Claude
         # bridge above. Reads the actual directories rather than a hardcoded

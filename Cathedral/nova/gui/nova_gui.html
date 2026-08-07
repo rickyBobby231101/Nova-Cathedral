@@ -817,6 +817,9 @@
     <div class="nav-item" onclick="showView('herbal',this)">
       <span class="icon">🌿</span> Herbal Library
     </div>
+    <div class="nav-item" onclick="showView('voice',this)">
+      <span class="icon">🔊</span> Voice
+    </div>
 
     <div class="nav-section" style="margin-top:10px">System</div>
     <div class="nav-item" onclick="showView('plugins',this)">
@@ -1049,6 +1052,38 @@
       <div class="card" id="herbal-detail-card" style="display:none">
         <div class="card-title" id="herbal-detail-title">—</div>
         <div id="herbal-detail-content" style="font-size:12px;line-height:1.7;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
+    <!-- VOICE -->
+    <div id="view-voice" class="section">
+      <div class="card">
+        <div class="card-title">Voice Status
+          <span style="margin-left:auto;font-size:10px" id="voice-status-badge">—</span>
+        </div>
+        <div class="bridge-row"><span class="bridge-key">ENGINE</span><span class="bridge-val" id="voice-engine">—</span></div>
+        <div class="bridge-row"><span class="bridge-key">CURRENT VOICE</span><span class="bridge-val" id="voice-current">—</span></div>
+        <div class="btn-row" style="margin-top:12px">
+          <button onclick="refreshVoiceStatus()">REFRESH</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Say Something</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          Plays out loud through this machine's speakers — the daemon and GUI run on the same host.
+        </div>
+        <input type="text" id="voice-speak-text" placeholder="Text for Nova to speak…">
+        <div class="btn-row">
+          <button class="green" onclick="speakText()">SPEAK</button>
+        </div>
+        <div class="query-result" id="voice-speak-result"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Piper Voices (neural, higher quality)</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          Falls back to the system TTS engine until a voice is downloaded. Downloads pull a ~60MB model from Hugging Face.
+        </div>
+        <div id="voice-list"><div class="empty-state">Click REFRESH to load.</div></div>
       </div>
     </div>
 
@@ -1443,6 +1478,7 @@ function showView(name, navEl) {
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
   if (name === 'herbal') loadHerbal();
+  if (name === 'voice') refreshVoiceStatus();
   if (name === 'plugins') refreshPlugins();
 }
 
@@ -1849,6 +1885,74 @@ async function showHerbalDetail(id, fallbackLabel) {
   if (!data || data.error) { body.textContent = data ? data.error : 'API offline.'; return; }
   title.textContent = data.label;
   body.textContent = data.content;
+}
+
+// ── Voice ─────────────────────────────────────────────────────────────────────
+function refreshVoiceStatus() {
+  apiCall('/api/voice/status').then(data => {
+    if (!data) { document.getElementById('voice-status-badge').textContent = 'offline'; return; }
+    document.getElementById('voice-engine').textContent  = data.engine || '—';
+    document.getElementById('voice-current').textContent = data.voice || '—';
+    const badge = document.getElementById('voice-status-badge');
+    badge.textContent = data.available ? 'available' : 'unavailable';
+    badge.style.color = data.available ? 'var(--green,#4ade80)' : 'var(--text-dim)';
+  });
+  loadVoiceList();
+}
+
+function loadVoiceList() {
+  const list = document.getElementById('voice-list');
+  list.innerHTML = '<div class="empty-state">Loading…</div>';
+  apiCall('/api/voice/list').then(data => {
+    if (!data || !data.voices) { list.innerHTML = '<div class="empty-state">API offline.</div>'; return; }
+    const entries = Object.entries(data.voices);
+    if (!entries.length) { list.innerHTML = '<div class="empty-state">No voices listed.</div>'; return; }
+    list.innerHTML = '';
+    entries.forEach(([key, v]) => {
+      const item = document.createElement('div');
+      item.className = 'plugin-item';
+      item.innerHTML =
+        `<div class="plugin-dot" style="background:${v.downloaded ? 'var(--green,#4ade80)' : 'var(--text-dim)'}"></div>` +
+        `<div class="plugin-name">${escHtml(key)} — ${escHtml(v.desc || '')}</div>` +
+        `<div class="plugin-ver">${v.downloaded ? 'downloaded' : ''}</div>`;
+      const btn = document.createElement('button');
+      btn.className = 'sm' + (v.downloaded ? ' green' : '');
+      btn.textContent = v.downloaded ? 'USE' : 'DOWNLOAD';
+      btn.onclick = () => v.downloaded ? setVoice(key) : downloadVoice(key, btn);
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  });
+}
+
+function setVoice(name) {
+  apiCall('/api/voice/set', 'POST', {voice: name}).then(data => {
+    if (data && data.ok) { logActivity('ok', `Voice set to ${name}`); refreshVoiceStatus(); }
+    else { logActivity('warn', `Could not set voice: ${data ? data.error : 'offline'}`); }
+  });
+}
+
+function downloadVoice(name, btn) {
+  btn.disabled = true;
+  btn.textContent = 'downloading…';
+  apiCall('/api/voice/download', 'POST', {voice: name}).then(data => {
+    if (data && data.ok) { logActivity('ok', `Voice '${name}' downloaded`); loadVoiceList(); }
+    else {
+      logActivity('warn', `Download failed: ${data ? data.error : 'offline'}`);
+      btn.disabled = false; btn.textContent = 'DOWNLOAD';
+    }
+  });
+}
+
+function speakText() {
+  const text   = document.getElementById('voice-speak-text').value.trim();
+  const result = document.getElementById('voice-speak-result');
+  if (!text) return;
+  result.textContent = 'Speaking…';
+  result.classList.add('visible');
+  apiCall('/api/voice/speak', 'POST', {text}).then(data => {
+    result.textContent = (data && data.ok) ? 'Done.' : `Error: ${data ? data.error : 'offline'}`;
+  });
 }
 
 // ── Reflections ───────────────────────────────────────────────────────────────
