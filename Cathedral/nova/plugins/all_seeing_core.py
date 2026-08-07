@@ -25,6 +25,17 @@ class AllSeeingCore:
     def __init__(self, cathedral_path: Path = None):
         self.cathedral_path = cathedral_path or (Path.home() / "cathedral")
         self._boot_time = psutil.boot_time() if _HAS_PSUTIL else time.time()
+        if _HAS_PSUTIL:
+            # psutil.Process.cpu_percent() reports 0.0 until it has a prior
+            # baseline to diff against. Priming here means the first real
+            # _top_processes() call — potentially the daemon's very first
+            # sysinfo request — gets a real reading instead of an all-zero
+            # list, since process_iter reuses these Process objects.
+            try:
+                for _ in psutil.process_iter(["cpu_percent"]):
+                    pass
+            except Exception:
+                pass
 
     # ── system snapshot ───────────────────────────────────────────────────────
 

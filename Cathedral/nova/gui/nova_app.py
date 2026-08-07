@@ -385,14 +385,14 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         # ── goals ─────────────────────────────────────────────────────────────
         if path == "/api/goals":
             if method == "POST":
-                goal = {
-                    "id":        str(len(_state["goals"]) + 1),
-                    "goal":      bd.get("goal", ""),
-                    "priority":  bd.get("priority", "medium"),
-                    "status":    "active",
-                    "completed": False,
-                }
                 with _lock:
+                    goal = {
+                        "id":        str(len(_state["goals"]) + 1),
+                        "goal":      bd.get("goal", ""),
+                        "priority":  bd.get("priority", "medium"),
+                        "status":    "active",
+                        "completed": False,
+                    }
                     _state["goals"].append(goal)
                 return goal
             with _lock:
