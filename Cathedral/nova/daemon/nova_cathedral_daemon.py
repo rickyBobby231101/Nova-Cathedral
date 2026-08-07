@@ -1080,8 +1080,15 @@ class NovaConsciousness:
         messages.extend(self.session_history[-10:])
         messages.append({"role": "user", "content": prompt})
         result = await self._ollama_chat(messages)
-        if "error" not in result:
-            self._append_session(prompt, result["response"])
+        if "error" in result:
+            return result
+        if self._looks_like_prompt_echo(result["response"]):
+            # This is the fallback path reasoning_ask itself uses, so there's
+            # nowhere further to fall back to — surface it honestly instead
+            # of returning the echoed prompt as if it were a real answer.
+            logging.warning(f"{self._active_model()} echoed its system prompt instead of answering")
+            return {"error": "model echoed its own instructions instead of answering — try rephrasing"}
+        self._append_session(prompt, result["response"])
         return result
 
     async def reasoning_ask(self, prompt: str) -> dict:
@@ -1101,10 +1108,17 @@ class NovaConsciousness:
 
         raw = result["response"]
         thinking, answer = self._parse_reasoning(raw)
-        self._append_session(prompt, answer or raw)
+        final = answer or raw
+
+        if self._looks_like_prompt_echo(final):
+            logging.warning(f"{self.reasoning_model} echoed its system prompt "
+                            f"instead of answering — falling back")
+            return await self.ollama_ask(prompt)
+
+        self._append_session(prompt, final)
 
         return {
-            "response": answer or raw,
+            "response": final,
             "thinking": thinking,
             "model":    self.reasoning_model,
             "latency":  result["latency"],
@@ -1283,6 +1297,27 @@ class NovaConsciousness:
         if not text:
             return False
         return bool(self._REFUSAL_PATTERNS.search(text[:300]))
+
+    # Deliberately person-agnostic ("through the Observer..." not "You/I
+    # perceive through the Observer...") — the system prompt phrases this in
+    # second person ("You perceive...") but a model reciting it back does so
+    # in first person ("I perceive..."), which a naively-copied fingerprint
+    # misses entirely. Caught this during testing: the exact captured echo
+    # text failed to match until the fingerprint was trimmed to the part
+    # that's identical regardless of grammatical person.
+    _PROMPT_ECHO_FINGERPRINT = "through the observer, reason through the oracle, respond through the echo"
+
+    def _looks_like_prompt_echo(self, text: str) -> bool:
+        """Small reasoning models (deepseek-r1:1.5b here) occasionally recite
+        their own system prompt back verbatim instead of generating a real
+        answer — confirmed live: asking 'Say OK if you can hear me' in
+        reasoning mode returned the system prompt's fixed opening lines as
+        the 'response'. The fingerprint is static boilerplate present in
+        every system prompt, so it can't appear in a genuine answer by
+        coincidence."""
+        if not text:
+            return False
+        return self._PROMPT_ECHO_FINGERPRINT in text.lower()
 
     async def _process_goal(self, goal: dict):
         """Execute one goal — research it and store the finding."""

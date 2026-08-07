@@ -941,6 +941,8 @@
         <div class="card-title">Conversational Interface
           <button class="sm" id="reasoning-toggle-btn" style="margin-left:auto" onclick="toggleReasoning()"
             title="Deep reasoning routes through the daemon's deepseek model — slower, more thorough">DEEP REASONING: OFF</button>
+          <button class="sm" id="autospeak-toggle-btn" onclick="toggleAutoSpeak()"
+            title="Nova speaks each reply out loud through this machine's speakers">AUTO-SPEAK: OFF</button>
           <button class="sm orange" onclick="clearChat()">CLEAR</button>
         </div>
         <div class="chat-window" id="chat-window">
@@ -953,6 +955,8 @@
         <div class="chat-input-area">
           <textarea id="chat-input" placeholder="Speak to Nova… (Enter to send, Shift+Enter for newline)" rows="2"
             onkeydown="chatKeydown(event)"></textarea>
+          <button class="sm" id="chat-mic-btn" onclick="toggleChatMic()" style="height:44px;align-self:flex-end"
+            title="Speak your message — fills the box, review before sending">🎤</button>
           <button class="green" onclick="sendChat()" style="height:44px;align-self:flex-end">SEND</button>
         </div>
       </div>
@@ -1721,6 +1725,17 @@ async function sendChat() {
   }
   const reply = data.response || data.error || JSON.stringify(data);
   appendChatMsg('nova', 'NOVA', reply, data.thinking);
+  if (autoSpeakEnabled && data.response) {
+    apiCall('/api/voice/speak', 'POST', {text: data.response});
+  }
+}
+
+let autoSpeakEnabled = false;
+function toggleAutoSpeak() {
+  autoSpeakEnabled = !autoSpeakEnabled;
+  const btn = document.getElementById('autospeak-toggle-btn');
+  btn.textContent = 'AUTO-SPEAK: ' + (autoSpeakEnabled ? 'ON' : 'OFF');
+  btn.classList.toggle('green', autoSpeakEnabled);
 }
 
 function appendChatMsg(role, sender, text, thinking) {
@@ -1979,6 +1994,9 @@ function speakText() {
 let sttPollTimer  = null;
 let sttListening  = false;   // mirrors the daemon's real state — used to decide
                               // whether leaving the Voice view should stop the mic
+let chatMicMode   = false;   // true while listening was started from the Chat mic
+                              // button — captures one utterance then auto-stops,
+                              // instead of the Voice tab's open-ended listening
 
 function refreshSttStatus() {
   apiCall('/api/stt/status').then(data => {
@@ -1987,7 +2005,7 @@ function refreshSttStatus() {
     const dlBtn     = document.getElementById('stt-download-btn');
     const startBtn  = document.getElementById('stt-start-btn');
     const stopBtn   = document.getElementById('stt-stop-btn');
-    if (!data) { badge.textContent = 'offline'; return; }
+    if (!data) { badge.textContent = 'offline'; updateChatMicButton(); return; }
     if (!data.available) {
       sttListening = false;
       badge.textContent = 'model not downloaded';
@@ -2008,7 +2026,28 @@ function refreshSttStatus() {
       dlBtn.style.display = 'none'; startBtn.style.display = ''; stopBtn.style.display = 'none';
       if (sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
     }
+    updateChatMicButton();
   });
+}
+
+function updateChatMicButton() {
+  const btn = document.getElementById('chat-mic-btn');
+  if (!btn) return;
+  if (sttListening && chatMicMode) {
+    btn.textContent = '🔴'; btn.title = 'Listening… click to cancel';
+  } else {
+    btn.textContent = '🎤'; btn.title = 'Speak your message — fills the box, review before sending';
+  }
+}
+
+function toggleChatMic() {
+  if (sttListening && chatMicMode) {
+    chatMicMode = false;
+    stopListening();
+    return;
+  }
+  chatMicMode = true;
+  startListening();
 }
 
 function downloadSttModel() {
@@ -2045,6 +2084,14 @@ function pollStt() {
     if (data.error) { logActivity('warn', `STT error: ${data.error}`); }
     if (!data.listening) { refreshSttStatus(); return; }
     (data.finals || []).forEach(f => {
+      if (chatMicMode) {
+        // Single-utterance capture from the Chat mic button: fill the box,
+        // stop listening, let Chazel review/edit before actually sending.
+        document.getElementById('chat-input').value = f.text;
+        chatMicMode = false;
+        stopListening();
+        return;
+      }
       const item = document.createElement('div');
       item.className = 'emem-item';
       item.innerHTML =
