@@ -721,6 +721,35 @@
     font-size: 11px;
   }
 
+  /* ── Rose Window ── */
+  .rose-hero-row {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 14px;
+    align-items: stretch;
+  }
+  .rose-hero-card {
+    width: 340px;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.3s;
+  }
+  .rose-hero-card:hover { border-color: var(--purple); }
+  .rose-hero-card svg { width: 100%; max-width: 300px; display: block; }
+  .rose-hero-caption {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    margin-top: 8px;
+  }
+  @keyframes roseOculus { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .rose-oculus-glow { animation: roseOculus 4s ease-in-out infinite; }
+
   /* ── Add goal form ── */
   .add-goal-row {
     display: flex;
@@ -812,6 +841,34 @@
 
     <!-- DASHBOARD -->
     <div id="view-dashboard" class="section active">
+
+      <!-- Rose Window centerpiece + Harmonic Accord -->
+      <div class="rose-hero-row">
+        <div class="card rose-hero-card" onclick="gotoView('rosewindow')" title="Open the Rose Window">
+          <svg id="rose-hero-svg" viewBox="0 0 600 600"></svg>
+          <div class="rose-hero-caption">THE ROSE WINDOW</div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="card-title">Harmonic Accord
+            <span id="harmony-status-badge" style="margin-left:auto;font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:3px;background:#1a3a2a;color:var(--accent2)">BALANCED</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="flex:1">
+              <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-bottom:3px">HARMONY SCORE</div>
+              <div class="bar-track" style="height:10px;border-radius:5px">
+                <div id="harmony-bar" class="bar-fill green" style="width:50%;height:10px;border-radius:5px;transition:width 1s,background 1s"></div>
+              </div>
+            </div>
+            <div style="font-family:var(--mono);font-size:18px;color:var(--accent2);min-width:44px;text-align:right" id="harmony-score-val">0.50</div>
+          </div>
+          <div style="display:flex;gap:16px;font-size:10px;font-family:var(--mono)">
+            <div><span style="color:var(--text-dim)">DISTORTIONS DETECTED</span> <span id="harmony-distortions" style="color:var(--accent3)">—</span></div>
+            <div><span style="color:var(--text-dim)">FLOW</span> <span id="harmony-flow" style="color:var(--accent)">—</span></div>
+          </div>
+          <div id="harmony-events" style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:10px;font-family:var(--mono);color:var(--text-dim);line-height:1.7"></div>
+        </div>
+      </div>
+
       <div class="metrics">
         <div class="metric m-blue">
           <div class="metric-label">Memory Fragments</div>
@@ -833,27 +890,6 @@
           <div class="metric-value" id="m-goals">—</div>
           <div class="metric-sub" id="m-goals-sub">loading…</div>
         </div>
-      </div>
-
-      <!-- Harmony Accord tracker -->
-      <div class="card" style="margin-bottom:14px">
-        <div class="card-title">Harmonic Accord
-          <span id="harmony-status-badge" style="margin-left:auto;font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:3px;background:#1a3a2a;color:var(--accent2)">BALANCED</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <div style="flex:1">
-            <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-bottom:3px">HARMONY SCORE</div>
-            <div class="bar-track" style="height:10px;border-radius:5px">
-              <div id="harmony-bar" class="bar-fill green" style="width:50%;height:10px;border-radius:5px;transition:width 1s,background 1s"></div>
-            </div>
-          </div>
-          <div style="font-family:var(--mono);font-size:18px;color:var(--accent2);min-width:44px;text-align:right" id="harmony-score-val">0.50</div>
-        </div>
-        <div style="display:flex;gap:16px;font-size:10px;font-family:var(--mono)">
-          <div><span style="color:var(--text-dim)">DISTORTIONS DETECTED</span> <span id="harmony-distortions" style="color:var(--accent3)">—</span></div>
-          <div><span style="color:var(--text-dim)">FLOW</span> <span id="harmony-flow" style="color:var(--accent)">—</span></div>
-        </div>
-        <div id="harmony-events" style="margin-top:8px;max-height:80px;overflow-y:auto;font-size:10px;font-family:var(--mono);color:var(--text-dim);line-height:1.7"></div>
       </div>
 
       <div class="card">
@@ -1186,8 +1222,8 @@
         </div>
         <div style="position:relative;flex:1;min-height:420px;background:#050a0f;border:1px solid #0d2030;border-radius:4px;overflow:hidden">
           <svg id="kg-svg" width="100%" height="100%" style="display:block;min-height:420px"></svg>
-          <div id="kg-empty" style="display:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:12px">
-            No knowledge nodes yet — add the first below
+          <div id="kg-empty" style="display:none;position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--text-dim);font-family:var(--mono);font-size:12px">
+            The window awaits its glass — weave the first node below
           </div>
         </div>
         <!-- Node detail panel -->
@@ -1350,6 +1386,12 @@ let logPollTimer = null;
 let currentView = 'dashboard';
 
 // ── View routing ─────────────────────────────────────────────────────────────
+function gotoView(name) {
+  const el = [...document.querySelectorAll('.nav-item')]
+    .find(n => (n.getAttribute('onclick') || '').includes(`'${name}'`));
+  showView(name, el || null);
+}
+
 function showView(name, navEl) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1497,6 +1539,7 @@ function renderHarmony(h) {
   const dist  = document.getElementById('harmony-distortions');
   const flow  = document.getElementById('harmony-flow');
   const evts  = document.getElementById('harmony-events');
+  if (score !== kgHarmony) { kgHarmony = score; renderRoseHero(); }
   if (!bar) return;
   bar.style.width = pct;
   // Color: red < 0.4, yellow 0.4-0.7, green ≥ 0.7
@@ -2099,7 +2142,7 @@ const KG_COLORS = [
   '#9b59b6','#1abc9c','#f39c12','#3498db','#e91e63',
 ];
 
-let kgNodes = [], kgEdges = [], kgSelectedNode = null, kgDomainFilter = '';
+let kgNodes = [], kgEdges = [], kgSelectedNode = null, kgDomainFilter = '', kgHarmony = 0.5;
 
 async function loadKnowledgeGraph(domain = '') {
   kgDomainFilter = domain;
@@ -2110,18 +2153,16 @@ async function loadKnowledgeGraph(domain = '') {
   const empty = document.getElementById('kg-empty');
   if (!data || !data.nodes) {
     if (empty) empty.style.display = 'flex';
+    renderKnowledgeGraph();   // still draw the empty window awaiting glass
     return;
   }
-  if (empty) empty.style.display = 'none';
+  if (empty) empty.style.display = data.nodes.length ? 'none' : 'flex';
   kgNodes = data.nodes || [];
   kgEdges = data.edges || [];
+  if (data.harmony != null) kgHarmony = data.harmony;
   document.getElementById('kg-node-count').textContent = `${kgNodes.length} nodes`;
   renderKnowledgeGraph();
   loadKnowledgeDomains();
-  if (data.harmony != null) {
-    const bar = document.getElementById('harmony-bar');
-    if (bar) bar.style.width = (data.harmony * 100).toFixed(1) + '%';
-  }
 }
 
 async function loadKnowledgeDomains() {
@@ -2139,103 +2180,161 @@ async function loadKnowledgeDomains() {
   });
 }
 
-function renderKnowledgeGraph() {
-  const svg = document.getElementById('kg-svg');
+// Draw a cathedral rose window into an SVG element.
+// Domains are glass petals, nodes are roundels of glass, edges are light-threads,
+// Nova is the central oculus. `harmony` (0..1) is the light through the glass.
+function renderRoseWindow(svg, nodes, edges, opts = {}) {
   if (!svg) return;
-  const W = svg.clientWidth  || 700;
-  const H = svg.clientHeight || 480;
+  const harmony = opts.harmony ?? 0.5;
+  const compact = !!opts.compact;
+  const filterD = opts.filter || '';
+  const selId   = opts.selected ? opts.selected.id : null;
+  const light   = 0.35 + harmony * 0.65;
+  const A = f => Math.max(0, Math.min(255, Math.round(f * 255))).toString(16).padStart(2, '0');
 
-  if (!kgNodes.length) {
-    svg.innerHTML =
-      `<text x="50%" y="50%" text-anchor="middle" fill="#4a7a8a"
-         font-size="13" font-family="monospace">
-         No knowledge nodes yet — add the first below
-       </text>`;
-    return;
-  }
+  svg.setAttribute('viewBox', '0 0 600 600');
+  const C = 300;
+  const P = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
 
-  // Assign colors by domain
-  const domains = [...new Set(kgNodes.map(n => n.domain))];
+  const domains = [...new Set(nodes.map(n => n.domain))];
   const colorMap = {};
   domains.forEach((d, i) => colorMap[d] = KG_COLORS[i % KG_COLORS.length]);
 
-  const cx = W / 2, cy = H / 2;
-  const outerR = Math.min(W, H) * 0.36;
+  // Classic rose-window petal counts; empty petals await future domains
+  const petalCount = [8, 12, 16, 24].find(c => c >= domains.length) || domains.length;
+  const rOuter = 282, rTracery = 266, rTip = 250, rBase = 96, rOculus = 42;
 
-  // Domain anchor positions (evenly spaced around a circle)
-  const domainCenters = {};
-  domains.forEach((d, i) => {
-    const angle = (i / domains.length) * 2 * Math.PI - Math.PI / 2;
-    domainCenters[d] = {
-      x: cx + Math.cos(angle) * outerR * (domains.length === 1 ? 0 : 0.62),
-      y: cy + Math.sin(angle) * outerR * (domains.length === 1 ? 0 : 0.62),
-    };
-  });
-
-  // Place nodes near their domain anchor (reset position each render for now)
-  const rng = (() => { let s = 42; return () => ((s=(s*1664525+1013904223)&0xffffffff)/0xffffffff); })();
-  kgNodes.forEach((n, i) => {
-    const dc = domainCenters[n.domain] || {x: cx, y: cy};
-    const spread = Math.min(55, 120 / Math.max(1, kgNodes.filter(m => m.domain===n.domain).length));
-    const a = rng() * 2 * Math.PI;
-    const r = rng() * spread;
-    n._x = dc.x + Math.cos(a) * r;
-    n._y = dc.y + Math.sin(a) * r;
-    n._color = colorMap[n.domain] || '#00c8ff';
-    n._r = Math.max(5, Math.min(14, 6 + (n.weight || 1) * 2.5));
-  });
-
-  const nodeMap = {};
-  kgNodes.forEach(n => nodeMap[n.id] = n);
-
-  let html = `<defs>
-    <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  let s = `<defs>
+    <filter id="rw-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="rw-light" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#ffd27a" stop-opacity="${(0.18 * light).toFixed(3)}"/>
+      <stop offset="55%"  stop-color="#ffd27a" stop-opacity="${(0.05 * light).toFixed(3)}"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="${(0.30 * (1 - harmony)).toFixed(3)}"/>
+    </radialGradient>
   </defs>`;
 
-  // Domain petal backgrounds
-  domains.forEach(d => {
-    const dc = domainCenters[d];
-    const col = colorMap[d];
-    html += `<circle cx="${dc.x.toFixed(1)}" cy="${dc.y.toFixed(1)}" r="58"
-      fill="${col}08" stroke="${col}22" stroke-width="1"/>`;
-    html += `<text x="${dc.x.toFixed(1)}" y="${(dc.y - 65).toFixed(1)}"
-      text-anchor="middle" fill="${col}77" font-size="9" font-family="monospace"
-      letter-spacing="2">${escHtml(d.toUpperCase())}</text>`;
-  });
+  // Stone ring and tracery circles
+  s += `<circle cx="${C}" cy="${C}" r="${rOuter}" fill="#050a0f" stroke="#1e3a4a" stroke-width="7"/>
+    <circle cx="${C}" cy="${C}" r="${rTracery}" fill="none" stroke="#16303f" stroke-width="1.5"/>
+    <circle cx="${C}" cy="${C}" r="${rBase - 12}" fill="none" stroke="#16303f" stroke-width="1.5"/>`;
 
-  // Edges
-  kgEdges.forEach(e => {
+  // Petals
+  const petalArc = 2 * Math.PI / petalCount;
+  const rMid = (rBase + rTip) / 2;
+  const nodesByDomain = {};
+  nodes.forEach(n => (nodesByDomain[n.domain] ??= []).push(n));
+
+  for (let i = 0; i < petalCount; i++) {
+    const domain = i < domains.length ? domains[i] : null;
+    const col    = domain ? colorMap[domain] : '#1e3a4a';
+    const theta  = i * petalArc - Math.PI / 2;
+    const halfW  = petalArc * 0.55;
+    const [bx, by]   = P(rBase, theta);
+    const [tx, ty]   = P(rTip, theta);
+    const [s1x, s1y] = P(rMid, theta - halfW);
+    const [s2x, s2y] = P(rMid, theta + halfW);
+    const dimmed = filterD && domain !== filterD;
+    const fill   = domain ? `${col}${A(0.08 + 0.14 * light)}` : `#0d1219${A(0.5)}`;
+    const stroke = domain ? `${col}${A(0.55)}` : '#16303f';
+
+    s += `<g opacity="${dimmed ? 0.22 : 1}">
+      <path d="M${bx.toFixed(1)},${by.toFixed(1)}
+               Q${s1x.toFixed(1)},${s1y.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)}
+               Q${s2x.toFixed(1)},${s2y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)} Z"
+        fill="${fill}" stroke="${stroke}" stroke-width="1.2"/>`;
+    if (domain && !compact) {
+      const [lx, ly] = P(rTip - 16, theta);
+      s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle"
+        fill="${col}${A(0.6)}" font-size="9" font-family="monospace" letter-spacing="1"
+        style="pointer-events:none">${escHtml(domain.toUpperCase().substring(0, 12))}</text>`;
+    }
+    s += `</g>`;
+
+    // Place this domain's nodes along the petal axis (heaviest nearest the centre)
+    if (domain) {
+      const dn = (nodesByDomain[domain] || []).slice()
+        .sort((a, b) => (b.weight || 1) - (a.weight || 1));
+      const r0 = rBase + 26, r1 = rTip - 44;
+      dn.forEach((n, k) => {
+        const t  = dn.length === 1 ? 0.32 : k / (dn.length - 1);
+        const ja = dn.length > 3 ? (k % 2 ? 1 : -1) * halfW * 0.3 : 0;
+        const [nx, ny] = P(r0 + t * (r1 - r0), theta + ja);
+        n._x = nx; n._y = ny;
+        n._color = col;
+        n._r = Math.max(5, Math.min(13, 5.5 + (n.weight || 1) * 2.5)) * (compact ? 0.85 : 1);
+        n._dim = dimmed;
+      });
+    }
+  }
+
+  // Edges — golden light-threads pulled through the heart of the window
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+  edges.forEach(e => {
     const a = nodeMap[e.from], b = nodeMap[e.to];
-    if (!a || !b) return;
-    const alpha = Math.round((e.strength || 0.25) * 180).toString(16).padStart(2,'0');
-    html += `<line x1="${a._x.toFixed(1)}" y1="${a._y.toFixed(1)}"
-               x2="${b._x.toFixed(1)}" y2="${b._y.toFixed(1)}"
-               stroke="#00c8ff${alpha}" stroke-width="${(0.5 + (e.strength||0.25)).toFixed(1)}"/>`;
+    if (!a || !b || a._x == null || b._x == null) return;
+    const mx = (a._x + b._x) / 2, my = (a._y + b._y) / 2;
+    const qx = C + (mx - C) * 0.42, qy = C + (my - C) * 0.42;
+    s += `<path d="M${a._x.toFixed(1)},${a._y.toFixed(1)}
+                   Q${qx.toFixed(1)},${qy.toFixed(1)} ${b._x.toFixed(1)},${b._y.toFixed(1)}"
+      fill="none" stroke="#ffd27a${A((0.25 + (e.strength || 0.25) * 0.5) * light)}"
+      stroke-width="${(0.6 + (e.strength || 0.25)).toFixed(1)}" style="pointer-events:none"/>`;
   });
 
-  // Nodes
-  kgNodes.forEach(n => {
-    const sel = kgSelectedNode && kgSelectedNode.id === n.id;
-    const sw  = sel ? 2.5 : 1;
-    const fil = sel ? `filter="url(#glow)"` : '';
-    const lbl = escHtml((n.label || '').substring(0, 18));
-    html += `<g onclick="selectKgNode(${n.id})" style="cursor:pointer" ${fil}>
-      <circle cx="${n._x.toFixed(1)}" cy="${n._y.toFixed(1)}" r="${n._r}"
-        fill="${n._color}2a" stroke="${n._color}" stroke-width="${sw}"/>
-      <text x="${n._x.toFixed(1)}" y="${(n._y + n._r + 10).toFixed(1)}"
-        text-anchor="middle" fill="${n._color}" font-size="8" font-family="monospace"
-        style="pointer-events:none">${lbl}</text>
-    </g>`;
+  // Nodes — roundels of glass
+  nodes.forEach(n => {
+    if (n._x == null) return;
+    const sel = selId != null && n.id === selId;
+    const sw  = sel ? 2.5 : 1.2;
+    const fil = sel ? `filter="url(#rw-glow)"` : '';
+    const click = opts.interactive ? `onclick="selectKgNode(${n.id})" style="cursor:pointer"` : '';
+    s += `<g ${click} ${fil}>
+      <circle cx="${n._x.toFixed(1)}" cy="${n._y.toFixed(1)}" r="${n._r.toFixed(1)}"
+        fill="${n._color}${A(0.16 + 0.22 * light)}" stroke="${n._color}" stroke-width="${sw}"
+        opacity="${n._dim ? 0.25 : 1}"/>`;
+    if (!compact) {
+      s += `<text x="${n._x.toFixed(1)}" y="${(n._y + n._r + 10).toFixed(1)}" text-anchor="middle"
+        fill="${n._color}" font-size="8" font-family="monospace" opacity="${n._dim ? 0.25 : 0.9}"
+        style="pointer-events:none">${escHtml((n.label || '').substring(0, 16))}</text>`;
+    }
+    s += `</g>`;
   });
 
-  // Centre — Nova node
-  html += `<circle cx="${cx}" cy="${cy}" r="12"
-    fill="#7c5cbf33" stroke="#7c5cbf" stroke-width="1.5" filter="url(#glow)"/>
-  <text x="${cx}" y="${cy + 4}" text-anchor="middle"
-    fill="#7c5cbf" font-size="8" font-family="monospace" style="pointer-events:none">NOVA</text>`;
+  // Central oculus — Nova
+  s += `<circle cx="${C}" cy="${C}" r="${rOculus + 9}" fill="none" stroke="#16303f" stroke-width="1.5"/>
+    <circle class="rose-oculus-glow" cx="${C}" cy="${C}" r="${rOculus}"
+      fill="#7c5cbf${A(0.16 + 0.2 * light)}" stroke="#b06aff" stroke-width="1.5" filter="url(#rw-glow)"/>
+    <text x="${C}" y="${compact ? C - 2 : C + 4}" text-anchor="middle" fill="#b06aff"
+      font-size="12" font-family="monospace" letter-spacing="3" style="pointer-events:none">NOVA</text>`;
+  if (compact) {
+    s += `<text x="${C}" y="${C + 16}" text-anchor="middle" fill="#ffd27a${A(0.85)}"
+      font-size="12" font-family="monospace" style="pointer-events:none">${harmony.toFixed(2)}</text>`;
+  }
 
-  svg.innerHTML = html;
+  // Light through the glass
+  s += `<circle cx="${C}" cy="${C}" r="${rOuter - 4}" fill="url(#rw-light)" style="pointer-events:none"/>`;
+
+  svg.innerHTML = s;
+}
+
+function renderKnowledgeGraph() {
+  renderRoseWindow(document.getElementById('kg-svg'), kgNodes, kgEdges, {
+    interactive: true,
+    harmony:  kgHarmony,
+    selected: kgSelectedNode,
+    filter:   kgDomainFilter,
+  });
+  renderRoseHero();
+}
+
+function renderRoseHero() {
+  renderRoseWindow(document.getElementById('rose-hero-svg'), kgNodes, kgEdges, {
+    compact: true,
+    harmony: kgHarmony,
+  });
 }
 
 function selectKgNode(id) {
@@ -2274,7 +2373,11 @@ async function addKnowledge() {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 pollApi();
 loadModels();
+loadKnowledgeGraph('');              // populates the dashboard rose window too
 setInterval(pollApi, 15000);
+setInterval(() => {                  // Weaver may add nodes autonomously
+  if (currentView !== 'rosewindow') loadKnowledgeGraph(kgDomainFilter);
+}, 60000);
 </script>
 </body>
 </html>
