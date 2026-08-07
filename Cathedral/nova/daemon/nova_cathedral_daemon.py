@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import sys
@@ -35,6 +36,75 @@ if not getattr(sys, "frozen", False):
     for _p in ("plugins", "modules"):
         sys.path.insert(0, str(_NOVA_ROOT / _p))
     sys.path.insert(0, str(_NOVA_ROOT / "nuclear" / "memory"))
+
+# ── self-edit crash-loop guard ──────────────────────────────────────────────
+# Files Nova is never allowed to propose self-edits to: the live daemon
+# entrypoint (editing the file this process is currently running as is how
+# you get an unrecoverable crash loop) and the self-build safety mechanism
+# itself (editing your own backup/rollback system is how you lose the
+# ability to roll back).
+_SELF_EDIT_PROTECTED = {"nova_cathedral_daemon.py", "nova_self_builder.py"}
+
+# Deliberately independent of nova_self_builder / any optional module below —
+# this must keep working even if a self-edit broke one of those modules.
+# Runs before those imports so a broken module can't stop it from firing.
+_SELF_EDIT_MARKER = _NOVA_ROOT.parent.parent / "cathedral" / "self_builds" / "pending_verify.json"
+
+
+def _mark_pending_verify(target_path: str, backup_path: str) -> None:
+    """Record that target_path was just self-edited and still needs to
+    survive a stable boot before it's trusted."""
+    try:
+        _SELF_EDIT_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _SELF_EDIT_MARKER.write_text(json.dumps(
+            {"file": target_path, "backup": backup_path, "state": "pending"}))
+    except Exception:
+        pass
+
+
+def _clear_pending_verify() -> None:
+    _SELF_EDIT_MARKER.unlink(missing_ok=True)
+
+
+def _self_edit_crash_guard() -> None:
+    """
+    If we're booting and find a marker already in "booting" state, the
+    previous process set it and never lived long enough to clear it —
+    i.e. the last self-edit crashed the daemon. Revert that file from its
+    backup before anything imports it. A marker still in "pending" state
+    means this is the first boot since the edit; give it a chance to prove
+    itself and just advance the marker to "booting".
+    """
+    if not _SELF_EDIT_MARKER.exists():
+        return
+    try:
+        marker = json.loads(_SELF_EDIT_MARKER.read_text())
+    except Exception:
+        _SELF_EDIT_MARKER.unlink(missing_ok=True)
+        return
+
+    if marker.get("state") == "pending":
+        marker["state"] = "booting"
+        try:
+            _SELF_EDIT_MARKER.write_text(json.dumps(marker))
+        except Exception:
+            pass
+        return
+
+    if marker.get("state") == "booting":
+        target, backup = marker.get("file"), marker.get("backup")
+        try:
+            if target and backup and Path(backup).exists():
+                shutil.copy2(backup, target)
+                print(f"[self-edit crash guard] {target} crashed the daemon "
+                      f"after a self-edit — reverted from {backup}",
+                      file=sys.stderr)
+        except Exception as e:
+            print(f"[self-edit crash guard] revert failed: {e}", file=sys.stderr)
+        _SELF_EDIT_MARKER.unlink(missing_ok=True)
+
+
+_self_edit_crash_guard()
 
 # ── optional modules ──────────────────────────────────────────────────────────
 
@@ -1219,6 +1289,10 @@ class NovaConsciousness:
         Shared by the self_evolve socket command and autonomous self-improvement."""
         if not _BUILDER_AVAILABLE:
             return {"error": "nova_self_builder module not available"}
+        if Path(path).name in _SELF_EDIT_PROTECTED:
+            return {"error": f"{Path(path).name} is excluded from self-modification "
+                              f"(it's the live daemon entrypoint or the self-build "
+                              f"safety mechanism itself)"}
 
         src = await asyncio.to_thread(_builder.read_source, path)
         if "error" in src:
@@ -1257,6 +1331,7 @@ class NovaConsciousness:
             logging.info(f"Self-evolved: {path}")
             self._log_resonance_event("self_evolved", entity="nova",
                                       delta=0.08, description=f"Evolved: {path}")
+            _mark_pending_verify(write_result["path"], write_result["backup"])
         return {**write_result, "intent": intent, "lines": len(new_content.splitlines())}
 
     async def _self_code_review(self):
@@ -2749,11 +2824,19 @@ class NovaConsciousness:
         await self.begin_flow_monitoring()
         self.is_awakened    = True
         self.last_heartbeat = datetime.now()
+        asyncio.create_task(self._confirm_self_edit_stable())
         logging.info(
             f"Nova awake | model: {self._active_model()} | "
             f"reasoning: {self.reasoning_enabled} | "
             f"web: {_WEB_SEARCH_AVAILABLE} | voice: {_VOICE_AVAILABLE}"
         )
+
+    async def _confirm_self_edit_stable(self):
+        """If a self-edit is pending verification, staying up this long without
+        crashing counts as proof it's safe — clear the marker so a later,
+        unrelated crash doesn't trigger a stale revert."""
+        await asyncio.sleep(45)
+        _clear_pending_verify()
 
     async def create_cathedral_structure(self):
         for d in ["logs", "mythos", "herbal_wisdom", "resonance_patterns",
