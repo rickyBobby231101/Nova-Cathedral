@@ -3556,6 +3556,20 @@ class NovaConsciousness:
         self._shutting_down = True
         logging.info("Cathedral shutdown initiated…")
         self.is_awakened = False
+        # Must happen before os.execv (self-restart) — an in-process re-exec
+        # doesn't run OS-level fd cleanup the way a real process death does,
+        # so a still-open PyAudio/ALSA mic handle can survive the exec and
+        # leave the device locked "busy" until a full systemctl restart.
+        # A normal systemd stop/restart kills the process outright instead,
+        # which is already safe regardless — this only protects the
+        # self-restart path.
+        if self._mic_listener:
+            try:
+                await asyncio.to_thread(self._mic_listener.stop)
+            except Exception as e:
+                logging.warning(f"Mic listener stop during shutdown failed: {e}")
+            self._mic_listener  = None
+            self._stt_listening = False
         try:
             self.sock.close()
             if os.path.exists(self.socket_path):

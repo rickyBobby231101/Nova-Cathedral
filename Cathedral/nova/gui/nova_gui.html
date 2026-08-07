@@ -1485,7 +1485,11 @@ function showView(name, navEl) {
   // Trigger data loads on first visit
   if (name === 'logs') startLogPolling();
   else stopLogPolling();
-  if (name !== 'voice' && sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
+  // Leaving the Voice view stops the actual mic listening, not just the GUI's
+  // poll timer — otherwise the daemon keeps recording silently in the
+  // background with no indicator anywhere else in the GUI that it's still on.
+  if (name !== 'voice' && sttListening) stopListening();
+  else if (name !== 'voice' && sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
   if (name === 'goals') loadGoals();
   if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
@@ -1972,7 +1976,9 @@ function speakText() {
 }
 
 // ── Speech-to-text (mic input) ─────────────────────────────────────────────────
-let sttPollTimer = null;
+let sttPollTimer  = null;
+let sttListening  = false;   // mirrors the daemon's real state — used to decide
+                              // whether leaving the Voice view should stop the mic
 
 function refreshSttStatus() {
   apiCall('/api/stt/status').then(data => {
@@ -1983,16 +1989,19 @@ function refreshSttStatus() {
     const stopBtn   = document.getElementById('stt-stop-btn');
     if (!data) { badge.textContent = 'offline'; return; }
     if (!data.available) {
+      sttListening = false;
       badge.textContent = 'model not downloaded';
       hint.textContent  = 'Needs the vosk speech model before it can listen.';
       dlBtn.style.display = ''; startBtn.style.display = 'none'; stopBtn.style.display = 'none';
     } else if (data.listening) {
+      sttListening = true;
       badge.textContent = 'listening';
       badge.style.color = 'var(--green,#4ade80)';
       hint.textContent  = 'Listening — speak, then use a transcript below or stop.';
       dlBtn.style.display = 'none'; startBtn.style.display = 'none'; stopBtn.style.display = '';
       if (!sttPollTimer) sttPollTimer = setInterval(pollStt, 700);
     } else {
+      sttListening = false;
       badge.textContent = 'ready';
       badge.style.color = '';
       hint.textContent  = 'Model ready. Click start and speak — this uses the real microphone.';
@@ -2014,12 +2023,13 @@ function downloadSttModel() {
 
 function startListening() {
   apiCall('/api/stt/start', 'POST').then(data => {
-    if (data && data.ok) { logActivity('ok', 'Listening started'); refreshSttStatus(); }
+    if (data && data.ok) { sttListening = true; logActivity('ok', 'Listening started'); refreshSttStatus(); }
     else { logActivity('warn', `Could not start listening: ${data ? data.error : 'offline'}`); }
   });
 }
 
 function stopListening() {
+  sttListening = false;
   apiCall('/api/stt/stop', 'POST').then(() => {
     if (sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
     document.getElementById('stt-partial').textContent = '';
