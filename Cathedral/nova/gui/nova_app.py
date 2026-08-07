@@ -417,7 +417,10 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         # ── knowledge graph ───────────────────────────────────────────────────
         if path == "/api/knowledge/graph":
             domain = qs.get("domain", [""])[0]
-            limit  = int(qs.get("limit", ["2000"])[0])
+            try:
+                limit = int(qs.get("limit", ["2000"])[0])
+            except ValueError:
+                limit = 2000
             result = _daemon_call("knowledge_graph", timeout=5.0,
                                   domain=domain, limit=limit)
             return result or {"nodes": [], "edges": [], "domains": [], "harmony": 0.5}
@@ -439,7 +442,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             node_id = qs.get("id", [""])[0]
             if not node_id:
                 return {"error": "missing id"}
-            result = _daemon_call("knowledge_node", timeout=5.0, id=int(node_id))
+            try:
+                node_id = int(node_id)
+            except ValueError:
+                return {"error": f"invalid id: {node_id!r}"}
+            result = _daemon_call("knowledge_node", timeout=5.0, id=node_id)
             return result or {"error": "daemon unreachable"}
 
         # ── evolution / plugins / bridge ──────────────────────────────────────
