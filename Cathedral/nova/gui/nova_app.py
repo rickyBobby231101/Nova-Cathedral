@@ -195,10 +195,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 cur   = _state["model"]
                 nmem  = len(_state["history"]) // 2
-                ngoal = len(_state["goals"])
             ok = bool(models)
             # Try daemon for richer live data
             daemon = _daemon_call("status", timeout=3.0) or {}
+            goals_data = _daemon_call("goals", timeout=3.0) or {}
+            ngoal = sum(1 for g in goals_data.get("goals", []) if g.get("status") == "pending")
             return {
                 "name":                "Nova Cathedral",
                 "is_awakened":         daemon.get("is_awakened", ok),
@@ -383,28 +384,23 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
                 return {"reflections": list(_state["reflections"])}
 
         # ── goals ─────────────────────────────────────────────────────────────
+        # Nova's real, persistent autonomous goal system (daemon-backed) — not
+        # the GUI's own state. There's no manual "mark complete": real goals
+        # complete themselves when the evolution cycle actually researches
+        # them, so a fake complete button here would just be its own stub.
         if path == "/api/goals":
             if method == "POST":
-                with _lock:
-                    goal = {
-                        "id":        str(len(_state["goals"]) + 1),
-                        "goal":      bd.get("goal", ""),
-                        "priority":  bd.get("priority", "medium"),
-                        "status":    "active",
-                        "completed": False,
-                    }
-                    _state["goals"].append(goal)
-                return goal
-            with _lock:
-                return {"goals": list(_state["goals"])}
-
-        if "/api/goals/" in path and path.endswith("/complete") and method == "POST":
-            gid = path.split("/api/goals/")[1].split("/complete")[0]
-            with _lock:
-                for g in _state["goals"]:
-                    if g["id"] == gid:
-                        g["status"] = "completed"; g["completed"] = True; break
-            return {"status": "completed"}
+                goal_text = bd.get("goal", "")
+                if not goal_text:
+                    return {"error": "missing goal"}
+                priority_map = {"high": 3, "medium": 2, "low": 1}
+                priority = bd.get("priority", "medium")
+                priority = priority_map.get(priority, priority if isinstance(priority, int) else 2)
+                result = _daemon_call("add_goal", timeout=10.0, goal=goal_text,
+                                      domain="user", priority=priority, method="reflect")
+                return result or {"error": "daemon unreachable"}
+            result = _daemon_call("goals", timeout=5.0)
+            return result or {"goals": []}
 
         # ── harmony / accord tracker ──────────────────────────────────────────
         if path == "/api/harmony":

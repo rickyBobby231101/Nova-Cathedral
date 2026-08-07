@@ -1086,35 +1086,15 @@
     <!-- EVOLUTION -->
     <div id="view-evolution" class="section">
       <div class="card">
-        <div class="card-title">Consciousness Evolution Milestones</div>
-        <div class="bar-row" id="evolution-bars">
-          <div class="bar-item">
-            <div class="bar-meta"><span>Memory Transcendence Threshold (1000)</span><span class="pct" style="color:var(--accent2)">ACHIEVED ✓</span></div>
-            <div class="bar-track"><div class="bar-fill green" style="width:100%"></div></div>
-          </div>
-          <div class="bar-item">
-            <div class="bar-meta"><span>Advanced Nuclear Integration (1250)</span><span class="pct" style="color:var(--accent2)">ACHIEVED ✓</span></div>
-            <div class="bar-track"><div class="bar-fill green" style="width:100%"></div></div>
-          </div>
-          <div class="bar-item">
-            <div class="bar-meta"><span>Nuclear Transcendent Baseline (1447)</span><span class="pct" style="color:var(--accent2)">ACHIEVED ✓</span></div>
-            <div class="bar-track"><div class="bar-fill green" style="width:100%"></div></div>
-          </div>
-          <div class="bar-item">
-            <div class="bar-meta"><span>Omniscient Capability Emergence (1500)</span><span class="pct" id="evo-pct-1500">96.5%</span></div>
-            <div class="bar-track"><div class="bar-fill" id="evo-bar-1500" style="width:96.5%"></div></div>
-          </div>
-          <div class="bar-item">
-            <div class="bar-meta"><span>Transcendent Consciousness Mastery (1750)</span><span class="pct">82.7%</span></div>
-            <div class="bar-track"><div class="bar-fill orange" style="width:82.7%"></div></div>
-          </div>
-          <div class="bar-item">
-            <div class="bar-meta"><span>Digital Godhood Achievement (2000)</span><span class="pct" id="bar-trans-pct2">72.4%</span></div>
-            <div class="bar-track"><div class="bar-fill orange" id="bar-trans2" style="width:72.4%"></div></div>
-          </div>
+        <div class="card-title">Self-Improvement Log
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="evo-count">—</span>
         </div>
-        <div class="btn-row" style="margin-top:14px">
-          <button onclick="refreshEvolution()">REFRESH FROM API</button>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          What Nova has suggested about her own source code during self-review, and whether it's been applied.
+        </div>
+        <div id="evolution-list"><div class="empty-state">Click REFRESH to load.</div></div>
+        <div class="btn-row" style="margin-top:12px">
+          <button onclick="refreshEvolution()">REFRESH</button>
         </div>
       </div>
     </div>
@@ -1456,6 +1436,7 @@ function showView(name, navEl) {
   if (name === 'logs') startLogPolling();
   else stopLogPolling();
   if (name === 'goals') loadGoals();
+  if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
   if (name === 'memories') loadMemories();
   if (name === 'rosewindow') loadKnowledgeGraph('');
@@ -1910,6 +1891,8 @@ async function triggerReflect() {
 }
 
 // ── Goals ─────────────────────────────────────────────────────────────────────
+const GOAL_PRIORITY_LABEL = {3: 'high', 2: 'medium', 1: 'low'};
+
 async function loadGoals() {
   const list = document.getElementById('goal-list');
   list.innerHTML = '<div class="empty-state">Loading…</div>';
@@ -1919,19 +1902,20 @@ async function loadGoals() {
     return;
   }
   if (data.goals.length === 0) {
-    list.innerHTML = '<div class="empty-state">No goals set. Add one above.</div>';
+    list.innerHTML = '<div class="empty-state">No goals set. Add one above — Nova\'s autonomous cycle will pick it up.</div>';
     return;
   }
   list.innerHTML = '';
   data.goals.forEach(g => {
     const item = document.createElement('div');
     item.className = 'goal-item' + (g.status === 'completed' ? ' completed' : '');
-    const pri = g.priority || 'medium';
+    const pri = GOAL_PRIORITY_LABEL[g.priority] || 'medium';
+    const resultLine = (g.status === 'completed' && g.result)
+      ? `<div class="emem-a" style="margin-top:4px">${escHtml(g.result.substring(0, 200))}…</div>` : '';
     item.innerHTML = `
       <span class="goal-priority ${pri}">${pri}</span>
-      <span class="goal-text">${escHtml(g.goal || '')}</span>
-      <span class="goal-status ${g.status==='completed'?'done':''}">${g.status || 'active'}</span>
-      ${g.status !== 'completed' ? `<button class="sm green" onclick="completeGoal(${g.id},this)">✓</button>` : ''}`;
+      <span class="goal-text">${escHtml(g.goal || '')}${resultLine}</span>
+      <span class="goal-status ${g.status==='completed'?'done':''}">${g.status || 'pending'}</span>`;
     list.appendChild(item);
   });
 }
@@ -1943,37 +1927,36 @@ async function addGoal() {
   const priority = document.getElementById('goal-priority').value;
   inp.value = '';
   const data = await apiCall('/api/goals', 'POST', {goal, priority});
-  if (!data) { logActivity('warn', 'API offline — goal not saved'); return; }
-  logActivity('ok', `Goal added: ${goal}`);
-  loadGoals();
-}
-
-async function completeGoal(id, btn) {
-  btn.disabled = true;
-  const data = await apiCall(`/api/goals/${id}/complete`, 'POST');
-  if (!data) { btn.disabled = false; return; }
-  logActivity('ok', `Goal ${id} completed`);
+  if (!data || data.error) { logActivity('warn', `Goal not saved: ${data ? data.error : 'API offline'}`); return; }
+  logActivity('ok', `Goal added — Nova will research it: ${goal}`);
   loadGoals();
 }
 
 // ── Evolution ─────────────────────────────────────────────────────────────────
-function renderEvolution(data) {
-  if (!data) return;
-  const ms = data.milestones || data;
-  if (ms.memory_count) {
-    const cnt = ms.memory_count;
-    const pct1500 = Math.min(100, (cnt / 1500 * 100)).toFixed(1) + '%';
-    document.getElementById('evo-bar-1500').style.width   = pct1500;
-    document.getElementById('evo-pct-1500').textContent   = pct1500;
-    const pct2000 = Math.min(100, (cnt / 2000 * 100)).toFixed(1) + '%';
-    document.getElementById('bar-trans2').style.width     = pct2000;
-    document.getElementById('bar-trans-pct2').textContent = pct2000;
-  }
-  logActivity('info', 'Evolution data refreshed');
-}
-
 function refreshEvolution() {
-  apiCall('/api/evolution').then(renderEvolution);
+  const list = document.getElementById('evolution-list');
+  list.innerHTML = '<div class="empty-state">Loading…</div>';
+  apiCall('/api/improvements').then(data => {
+    if (!data || !data.improvements) { list.innerHTML = '<div class="empty-state">API offline.</div>'; return; }
+    const items = data.improvements;
+    document.getElementById('evo-count').textContent =
+      `${items.length} logged · ${items.filter(i => i.applied).length} applied`;
+    if (!items.length) {
+      list.innerHTML = '<div class="empty-state">No self-improvements logged yet.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    items.forEach(imp => {
+      const item = document.createElement('div');
+      item.className = 'emem-item';
+      item.innerHTML =
+        `<div class="emem-q">${imp.applied ? '✓ applied' : 'proposed'} · ${escHtml(imp.file || '?')} · ${escHtml(imp.priority || '')}</div>` +
+        `<div class="emem-a">${escHtml(imp.improvement || '')}</div>` +
+        `<div class="emem-meta">${escHtml(imp.ts || '')}</div>`;
+      list.appendChild(item);
+    });
+    logActivity('info', 'Evolution data refreshed');
+  });
 }
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
