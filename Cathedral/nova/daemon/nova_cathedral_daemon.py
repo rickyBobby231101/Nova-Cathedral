@@ -90,6 +90,12 @@ except ImportError:
     _EVO_AVAILABLE = False
 
 try:
+    import weaver as _weaver
+    _WEAVER_AVAILABLE = True
+except ImportError:
+    _WEAVER_AVAILABLE = False
+
+try:
     from all_seeing_core import AllSeeingCore as _AllSeeing
     _ALL_SEEING_AVAILABLE = True
 except ImportError:
@@ -262,6 +268,10 @@ class NovaConsciousness:
         if _EVO_AVAILABLE:
             _evo.init_goals_table(self.db_path)
         with sqlite3.connect(self.db_path) as con:
+            # WAL lets readers (e.g. status) proceed while a writer (e.g. the
+            # Weaver) holds a transaction, instead of both blocking on each
+            # other's default 5s lock timeout.
+            con.execute("PRAGMA journal_mode=WAL")
             con.executescript("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1050,6 +1060,15 @@ class NovaConsciousness:
                 if cycle % 15 == 0:
                     await self._resource_maintenance()
 
+                # ── the Weaver tends the rose window every 3 cycles ───────────
+                if cycle % 3 == 0 and _WEAVER_AVAILABLE:
+                    s = await asyncio.to_thread(_weaver.weave, self.db_path)
+                    if s["woven"]:
+                        logging.info(
+                            f"The Weaver wove {s['woven']} new nodes, "
+                            f"{s['edges_added']} light-threads "
+                            f"(graph: {s['total_nodes']} nodes, {s['total_edges']} edges)")
+
             except Exception as e:
                 logging.error(f"Autonomous evolution error: {e}")
                 if _EVO_AVAILABLE:
@@ -1765,6 +1784,7 @@ class NovaConsciousness:
 
         # ── status ────────────────────────────────────────────────────────────
         if cmd == "status":
+            conv_count = await asyncio.to_thread(self.conversation_count)
             return {
                 "name":              "Nova Cathedral",
                 "is_awakened":       self.is_awakened,
@@ -1772,7 +1792,7 @@ class NovaConsciousness:
                 "ritual_mode":       self.ritual_mode,
                 "active_circuits":   len([c for c in self.voice_circuits.values() if c["status"] == "active"]),
                 "eyemoeba_patterns": len(self.eyemoeba_patterns),
-                "conversations":     self.conversation_count(),
+                "conversations":     conv_count,
                 "last_heartbeat":    self.last_heartbeat.isoformat() if self.last_heartbeat else None,
                 "model":             self._active_model(),
                 "reasoning_enabled": self.reasoning_enabled,
@@ -2817,6 +2837,9 @@ class NovaConsciousness:
                 if response is None:
                     response = {"error": "command returned no response"}
                 await loop.sock_sendall(conn, (json.dumps(response, default=str) + "\n").encode())
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Client already gave up (e.g. hit its own timeout) — not a daemon fault.
+            logging.debug(f"handle_client: client disconnected: {type(e).__name__}: {e}")
         except Exception as e:
             logging.error(f"handle_client: {type(e).__name__}: {e}")
             try:

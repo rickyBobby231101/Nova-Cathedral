@@ -74,19 +74,15 @@ def prettify(stem: str) -> str:
     return label[:1].upper() + label[1:]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--min-similarity", type=float, default=0.18,
-                    help="jaccard threshold for weaving an edge")
-    ap.add_argument("--max-edges-per-node", type=int, default=3)
-    args = ap.parse_args()
+def weave(db_path=DB_PATH, knowledge_dir=KNOWLEDGE_DIR,
+          min_similarity=0.18, max_edges_per_node=3, dry_run=False) -> dict:
+    """Weave new knowledge docs into the graph. Returns a summary dict.
 
-    docs = sorted(KNOWLEDGE_DIR.rglob("*.md"))
-    if not docs:
-        raise SystemExit(f"no .md documents under {KNOWLEDGE_DIR}")
-
-    con = sqlite3.connect(DB_PATH)
+    Callable from the daemon (cheap when nothing is new: one SELECT plus
+    file stats) or from the CLI below.
+    """
+    docs = sorted(Path(knowledge_dir).rglob("*.md"))
+    con = sqlite3.connect(db_path)
     existing = {r[0] for r in con.execute(
         "SELECT label FROM knowledge_nodes WHERE source='weaver'")}
 
@@ -106,16 +102,15 @@ def main():
         woven.append({"label": label, "domain": domain, "text": text,
                       "weight": round(weight, 2)})
 
-    print(f"{len(docs)} documents: {len(woven)} to weave, {skipped} already woven")
-    domains = Counter(d["domain"] for d in woven)
-    for dom, count in domains.most_common():
-        print(f"  {dom}: {count}")
+    summary = {
+        "documents": len(docs), "woven": len(woven), "skipped": skipped,
+        "edges_added": 0, "domains": dict(Counter(d["domain"] for d in woven)),
+        "sample": [(d["domain"], d["label"], d["weight"]) for d in woven[:15]],
+    }
 
-    if args.dry_run:
-        for d in woven[:15]:
-            print(f"  [{d['domain']}] {d['label']} (weight {d['weight']})")
+    if dry_run or not woven:
         con.close()
-        return
+        return summary
 
     now = datetime.now().isoformat()
     for d in woven:
@@ -126,9 +121,8 @@ def main():
         d["id"] = cur.lastrowid
     con.commit()
 
-    # Weave edges across ALL weaver+chazel nodes so new docs connect to old ones
-    rows = con.execute(
-        "SELECT id, label, content FROM knowledge_nodes").fetchall()
+    # Weave edges across ALL nodes so new docs connect to old ones
+    rows = con.execute("SELECT id, label, content FROM knowledge_nodes").fetchall()
     vocab = {r[0]: significant_words(r[2]) for r in rows}
     ids = [r[0] for r in rows]
 
@@ -139,14 +133,13 @@ def main():
             if not va or not vb:
                 continue
             sim = len(va & vb) / len(va | vb)
-            if sim >= args.min_similarity:
+            if sim >= min_similarity:
                 candidates.append((sim, a, b))
     candidates.sort(reverse=True)
 
     edge_count = Counter()
-    edges_added = 0
     for sim, a, b in candidates:
-        if edge_count[a] >= args.max_edges_per_node or edge_count[b] >= args.max_edges_per_node:
+        if edge_count[a] >= max_edges_per_node or edge_count[b] >= max_edges_per_node:
             continue
         strength = round(min(0.9, sim * 2.5), 2)
         con.execute(
@@ -158,14 +151,34 @@ def main():
             (a, b, strength, 0.5, now))
         edge_count[a] += 1
         edge_count[b] += 1
-        edges_added += 1
+        summary["edges_added"] += 1
     con.commit()
 
-    total_nodes = con.execute("SELECT COUNT(*) FROM knowledge_nodes").fetchone()[0]
-    total_edges = con.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
+    summary["total_nodes"] = con.execute("SELECT COUNT(*) FROM knowledge_nodes").fetchone()[0]
+    summary["total_edges"] = con.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
     con.close()
-    print(f"woven: {len(woven)} nodes, {edges_added} light-threads "
-          f"(graph now {total_nodes} nodes, {total_edges} edges)")
+    return summary
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--min-similarity", type=float, default=0.18,
+                    help="jaccard threshold for weaving an edge")
+    ap.add_argument("--max-edges-per-node", type=int, default=3)
+    args = ap.parse_args()
+
+    s = weave(min_similarity=args.min_similarity,
+              max_edges_per_node=args.max_edges_per_node, dry_run=args.dry_run)
+    print(f"{s['documents']} documents: {s['woven']} to weave, {s['skipped']} already woven")
+    for dom, count in sorted(s["domains"].items(), key=lambda kv: -kv[1]):
+        print(f"  {dom}: {count}")
+    if args.dry_run:
+        for dom, label, w in s["sample"]:
+            print(f"  [{dom}] {label} (weight {w})")
+    elif s["woven"]:
+        print(f"woven: {s['woven']} nodes, {s['edges_added']} light-threads "
+              f"(graph now {s['total_nodes']} nodes, {s['total_edges']} edges)")
 
 
 if __name__ == "__main__":
