@@ -276,10 +276,16 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
 
             with _lock:
                 _state["history"].append({"role": "assistant", "content": reply})
-            # Persist the exchange to the daemon's memory
-            _daemon_call("save", timeout=5.0,
-                         user_message=msg, nova_response=reply,
-                         context="gui_direct")
+            # Persist the exchange to the daemon's memory — but only for the
+            # direct-Ollama path. The reasoning path already went through the
+            # daemon's "ask" command, which saves internally (see
+            # nova_cathedral_daemon.py's ask handler); saving again here would
+            # double every reasoning-mode exchange in memory, Tillagon's
+            # watch, and harmony_score.
+            if not reasoning:
+                _daemon_call("save", timeout=5.0,
+                             user_message=msg, nova_response=reply,
+                             context="gui_direct")
             resp = {"response": reply}
             if thinking:
                 resp["thinking"] = thinking
