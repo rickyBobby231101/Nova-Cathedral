@@ -1243,6 +1243,13 @@ class NovaConsciousness:
         if len(new_content) < 100:
             return {"error": "Generated content too short — aborting self-modify"}
 
+        orig_lines = len(src["content"].splitlines())
+        new_lines  = len(new_content.splitlines())
+        if orig_lines > 20 and new_lines < orig_lines * 0.5:
+            return {"error": f"Generated content suspiciously short "
+                              f"({new_lines} lines vs {orig_lines} original — "
+                              f"likely a truncated response) — aborting self-modify"}
+
         write_result = await asyncio.to_thread(
             _builder.write_source, path, new_content
         )
