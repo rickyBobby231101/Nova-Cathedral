@@ -2104,6 +2104,43 @@ class NovaConsciousness:
             "code":        code,
         }
 
+    async def _run_plugin(self, name: str, input_data: dict = None) -> dict:
+        """Run a generated plugin's process() method, sandboxed via
+        code_sandbox (subprocess, blocklist-checked) rather than imported
+        into the live daemon process — a plugin is LLM-generated code from
+        a small local model, same trust level as anything else code_sandbox
+        already isolates. No live daemon access inside the sandbox
+        (system=None passed to the plugin's __init__), so plugins that need
+        Nova's actual state won't work — that's an intentional limit: a
+        subprocess can't hold a live reference to the daemon anyway, and
+        stubbing something fake in its place would be worse than being
+        explicit that plugins are input → output only."""
+        if not _SANDBOX_AVAILABLE:
+            return {"error": "code_sandbox module not available"}
+        plugin_path = self.cathedral_path / "plugins" / "auto" / f"{name}.py"
+        if not plugin_path.exists():
+            return {"error": f"no plugin named '{name}'"}
+        plugin_source = await asyncio.to_thread(plugin_path.read_text)
+
+        harness = (
+            f"{plugin_source}\n\n"
+            f"import json as _json\n"
+            f"_cls = get_plugin()\n"
+            f"_instance = _cls(None)\n"
+            f"_result = _instance.process({json.dumps(input_data or {})})\n"
+            f"print(_json.dumps(_result))\n"
+        )
+        result = await asyncio.to_thread(_sandbox_run, harness, 20)
+        if not result["ok"]:
+            return {"ok": False, "error": result.get("stderr") or "plugin run failed",
+                    "blocked": result.get("blocked", [])}
+        try:
+            parsed = json.loads(result["stdout"].strip().splitlines()[-1])
+        except Exception:
+            return {"ok": False, "error": "plugin did not print valid JSON on its last line",
+                    "stdout": result["stdout"]}
+        return {"ok": True, "result": parsed}
+
     # ── command dispatcher ────────────────────────────────────────────────────
 
     async def process_command(self, raw: str) -> dict:
@@ -3039,6 +3076,13 @@ class NovaConsciousness:
             ]
             return {"plugins": plugins, "count": len(plugins)}
 
+        elif cmd == "plugin_run":
+            name = d.get("name", "")
+            if not name:
+                return {"error": "missing name"}
+            input_data = d.get("input", d.get("input_data", {}))
+            return await self._run_plugin(name, input_data)
+
         # ── recall / memories ─────────────────────────────────────────────────
         elif cmd == "recall":
             query = d.get("query", d.get("q", ""))
@@ -3123,7 +3167,7 @@ class NovaConsciousness:
                     # storyteller
                     "tell_story",
                     # plugin writer
-                    "generate_plugin", "list_plugins",
+                    "generate_plugin", "list_plugins", "plugin_run",
                     # evolution / knowledge
                     "goals", "add_goal", "knowledge", "improvements",
                     # voice

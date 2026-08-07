@@ -1173,16 +1173,34 @@
     <!-- PLUGINS -->
     <div id="view-plugins" class="section">
       <div class="card">
-        <div class="card-title">Registered Plugins</div>
-        <div id="plugin-list">
-          <div class="plugin-item"><div class="plugin-dot"></div><div class="plugin-name">Omniscient Analysis</div><div class="plugin-ver">v2.0.0</div></div>
-          <div class="plugin-item"><div class="plugin-dot"></div><div class="plugin-name">Consciousness Evolution Tracker</div><div class="plugin-ver">v2.0.0</div></div>
-          <div class="plugin-item"><div class="plugin-dot"></div><div class="plugin-name">Quantum Consciousness Interface</div><div class="plugin-ver">v2.0.0</div></div>
-          <div class="plugin-item"><div class="plugin-dot" style="background:var(--accent2)"></div><div class="plugin-name">Herbal Knowledge</div><div class="plugin-ver">v1.0.0</div></div>
+        <div class="card-title">Generate a Plugin</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          Describe what it should do — Nova writes it, sandboxed execution only (no live daemon access inside a plugin).
         </div>
+        <input type="text" id="plugin-gen-name" placeholder="Name (optional) — e.g. 'weather'">
+        <textarea id="plugin-gen-desc" placeholder="Description — e.g. 'Fetch current weather for a city using wttr.in via urllib. input_data has a city key.'"></textarea>
+        <div class="btn-row">
+          <button class="green" onclick="generatePlugin()">GENERATE</button>
+        </div>
+        <div class="query-result" id="plugin-gen-result"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Registered Plugins
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="plugin-count">—</span>
+        </div>
+        <div id="plugin-list"><div class="empty-state">Click REFRESH to load.</div></div>
         <div class="btn-row" style="margin-top:12px">
           <button onclick="refreshPlugins()">REFRESH</button>
         </div>
+      </div>
+      <div class="card" id="plugin-run-card" style="display:none">
+        <div class="card-title" id="plugin-run-title">—</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Input as JSON — e.g. {"city": "London"}</div>
+        <input type="text" id="plugin-run-input" placeholder='{"city": "London"}'>
+        <div class="btn-row">
+          <button onclick="runPlugin()">RUN</button>
+        </div>
+        <div class="query-result" id="plugin-run-result"></div>
       </div>
     </div>
 
@@ -1444,6 +1462,7 @@ function showView(name, navEl) {
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
   if (name === 'herbal') loadHerbal();
+  if (name === 'plugins') refreshPlugins();
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1959,19 +1978,69 @@ function refreshEvolution() {
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
 function refreshPlugins() {
+  const list = document.getElementById('plugin-list');
+  list.innerHTML = '<div class="empty-state">Loading…</div>';
   apiCall('/api/plugins').then(data => {
-    if (!data || !data.plugins) return;
-    const list = document.getElementById('plugin-list');
+    if (!data || !data.plugins) { list.innerHTML = '<div class="empty-state">API offline.</div>'; return; }
+    document.getElementById('plugin-count').textContent = `${data.plugins.length} plugins`;
+    if (!data.plugins.length) {
+      list.innerHTML = '<div class="empty-state">No plugins yet — generate one above.</div>';
+      return;
+    }
     list.innerHTML = '';
     data.plugins.forEach(p => {
-      list.innerHTML += `
-        <div class="plugin-item">
-          <div class="plugin-dot"></div>
-          <div class="plugin-name">${escHtml(p.name)}</div>
-          <div class="plugin-ver">v${p.version||'?'}</div>
-        </div>`;
+      const item = document.createElement('div');
+      item.className = 'plugin-item';
+      item.style.cursor = 'pointer';
+      item.innerHTML =
+        `<div class="plugin-dot"></div>` +
+        `<div class="plugin-name">${escHtml(p.name)}</div>` +
+        `<div class="plugin-ver">${(p.size/1024).toFixed(1)}KB</div>`;
+      item.onclick = () => selectPluginToRun(p.name);
+      list.appendChild(item);
     });
     logActivity('ok', `${data.plugins.length} plugins loaded`);
+  });
+}
+
+function generatePlugin() {
+  const name        = document.getElementById('plugin-gen-name').value.trim();
+  const description = document.getElementById('plugin-gen-desc').value.trim();
+  const result       = document.getElementById('plugin-gen-result');
+  if (!description) return;
+  result.textContent = 'Nova is writing the plugin…';
+  result.classList.add('visible');
+  apiCall('/api/plugins/generate', 'POST', {name, description}).then(data => {
+    if (!data) { result.textContent = 'API offline.'; return; }
+    if (data.error) { result.textContent = `Error: ${data.error}`; return; }
+    result.textContent = `Written: ${data.name} (${data.lines} lines) → ${data.path}`;
+    refreshPlugins();
+  });
+}
+
+function selectPluginToRun(name) {
+  document.getElementById('plugin-run-card').style.display = 'block';
+  document.getElementById('plugin-run-title').textContent = name;
+  document.getElementById('plugin-run-card').dataset.pluginName = name;
+  document.getElementById('plugin-run-result').textContent = '';
+}
+
+function runPlugin() {
+  const name  = document.getElementById('plugin-run-card').dataset.pluginName;
+  const raw   = document.getElementById('plugin-run-input').value.trim();
+  const result = document.getElementById('plugin-run-result');
+  let input = {};
+  if (raw) {
+    try { input = JSON.parse(raw); }
+    catch (e) { result.textContent = `Invalid JSON input: ${e.message}`; result.classList.add('visible'); return; }
+  }
+  result.textContent = 'Running (sandboxed)…';
+  result.classList.add('visible');
+  apiCall('/api/plugins/run', 'POST', {name, input}).then(data => {
+    if (!data) { result.textContent = 'API offline.'; return; }
+    result.textContent = data.ok
+      ? JSON.stringify(data.result, null, 2)
+      : `Error: ${data.error}${data.stdout ? '\n\nstdout: ' + data.stdout : ''}`;
   });
 }
 

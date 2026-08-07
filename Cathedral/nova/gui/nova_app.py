@@ -449,10 +449,29 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
                                       "conversations": len(_state["history"]) // 2}}
 
         if path == "/api/improvements":
-            return {"improvements": []}
+            result = _daemon_call("improvements", timeout=5.0)
+            return result or {"improvements": []}
 
         if path == "/api/plugins":
-            return {"plugins": []}
+            result = _daemon_call("list_plugins", timeout=5.0)
+            return result or {"plugins": [], "count": 0}
+
+        if path == "/api/plugins/generate" and method == "POST":
+            description = bd.get("description", "")
+            name        = bd.get("name", "")
+            if not description:
+                return {"error": "missing description"}
+            result = _daemon_call("generate_plugin", timeout=180.0,
+                                  description=description, name=name)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/plugins/run" and method == "POST":
+            name  = bd.get("name", "")
+            inp   = bd.get("input", {})
+            if not name:
+                return {"error": "missing name"}
+            result = _daemon_call("plugin_run", timeout=30.0, name=name, input=inp)
+            return result or {"error": "daemon unreachable"}
 
         if path == "/api/bridge":
             return {"messages": []}
