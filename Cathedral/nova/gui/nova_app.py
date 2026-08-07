@@ -255,9 +255,10 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             msg = bd.get("message", "")
             with _lock:
                 _state["history"].append({"role": "user", "content": msg})
-                hist      = list(_state["history"])
-                sysprompt = _state["system_prompt"]
-                reasoning = _state["reasoning_enabled"]
+                hist            = list(_state["history"])
+                user_msg_index  = len(_state["history"]) - 1
+                sysprompt       = _state["system_prompt"]
+                reasoning       = _state["reasoning_enabled"]
 
             thinking = None
             if reasoning:
@@ -274,18 +275,45 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
                 msgs = [{"role": "system", "content": sysprompt}] + hist if sysprompt else hist
                 reply = chat_reply(msgs, timeout=180)
 
+            # Both failure paths return a bracketed placeholder string rather
+            # than raising — that's convenient for displaying an error in the
+            # chat window, but it must never be treated as a real assistant
+            # turn. It previously was: appended straight into history, which
+            # then got included as "prior context" in every later message,
+            # visibly confusing the model (it would try to make sense of a
+            # "previous reply" that was actually a system error string,
+            # spiraling into breaking character entirely — confirmed live,
+            # a daemon timeout here led directly to Nova denying she was
+            # Nova a few turns later). Roll back the speculative user-message
+            # append too, so a failed exchange leaves no trace in the
+            # ongoing context at all, rather than an orphaned user turn with
+            # no reply.
+            is_error = reply.startswith("[Reasoning call failed:") or reply.startswith("[Ollama error:")
             with _lock:
-                _state["history"].append({"role": "assistant", "content": reply})
+                if is_error:
+                    if (len(_state["history"]) > user_msg_index
+                            and _state["history"][user_msg_index]["content"] == msg):
+                        del _state["history"][user_msg_index:]
+                else:
+                    _state["history"].append({"role": "assistant", "content": reply})
             # Persist the exchange to the daemon's memory — but only for the
             # direct-Ollama path. The reasoning path already went through the
             # daemon's "ask" command, which saves internally (see
             # nova_cathedral_daemon.py's ask handler); saving again here would
             # double every reasoning-mode exchange in memory, Tillagon's
-            # watch, and harmony_score.
-            if not reasoning:
+            # watch, and harmony_score. Never persist an error placeholder —
+            # same reasoning as above, just for permanent memory instead of
+            # the in-session history.
+            if not reasoning and not is_error:
                 _daemon_call("save", timeout=5.0,
                              user_message=msg, nova_response=reply,
                              context="gui_direct")
+            # Error case omits "response" entirely (rather than setting it to
+            # the error string) so the frontend's existing response||error
+            # fallback still displays it, but auto-speak — which only fires
+            # on data.response — won't read a system error string out loud.
+            if is_error:
+                return {"error": reply}
             resp = {"response": reply}
             if thinking:
                 resp["thinking"] = thinking
