@@ -1085,6 +1085,21 @@
         </div>
         <div id="voice-list"><div class="empty-state">Click REFRESH to load.</div></div>
       </div>
+      <div class="card">
+        <div class="card-title">Microphone Input (speech-to-text)
+          <span style="margin-left:auto;font-size:10px" id="stt-status-badge">—</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px" id="stt-hint">
+          Checking availability…
+        </div>
+        <div class="btn-row">
+          <button id="stt-download-btn" onclick="downloadSttModel()" style="display:none">DOWNLOAD MODEL (~40MB)</button>
+          <button id="stt-start-btn" class="green" onclick="startListening()" style="display:none">START LISTENING</button>
+          <button id="stt-stop-btn" onclick="stopListening()" style="display:none">STOP</button>
+        </div>
+        <div id="stt-partial" style="margin-top:10px;font-size:12px;color:var(--text-dim);font-style:italic"></div>
+        <div id="stt-finals" style="margin-top:6px"></div>
+      </div>
     </div>
 
     <!-- REFLECTIONS -->
@@ -1470,6 +1485,7 @@ function showView(name, navEl) {
   // Trigger data loads on first visit
   if (name === 'logs') startLogPolling();
   else stopLogPolling();
+  if (name !== 'voice' && sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
   if (name === 'goals') loadGoals();
   if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
@@ -1478,7 +1494,7 @@ function showView(name, navEl) {
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
   if (name === 'herbal') loadHerbal();
-  if (name === 'voice') refreshVoiceStatus();
+  if (name === 'voice') { refreshVoiceStatus(); refreshSttStatus(); }
   if (name === 'plugins') refreshPlugins();
 }
 
@@ -1952,6 +1968,84 @@ function speakText() {
   result.classList.add('visible');
   apiCall('/api/voice/speak', 'POST', {text}).then(data => {
     result.textContent = (data && data.ok) ? 'Done.' : `Error: ${data ? data.error : 'offline'}`;
+  });
+}
+
+// ── Speech-to-text (mic input) ─────────────────────────────────────────────────
+let sttPollTimer = null;
+
+function refreshSttStatus() {
+  apiCall('/api/stt/status').then(data => {
+    const badge     = document.getElementById('stt-status-badge');
+    const hint      = document.getElementById('stt-hint');
+    const dlBtn     = document.getElementById('stt-download-btn');
+    const startBtn  = document.getElementById('stt-start-btn');
+    const stopBtn   = document.getElementById('stt-stop-btn');
+    if (!data) { badge.textContent = 'offline'; return; }
+    if (!data.available) {
+      badge.textContent = 'model not downloaded';
+      hint.textContent  = 'Needs the vosk speech model before it can listen.';
+      dlBtn.style.display = ''; startBtn.style.display = 'none'; stopBtn.style.display = 'none';
+    } else if (data.listening) {
+      badge.textContent = 'listening';
+      badge.style.color = 'var(--green,#4ade80)';
+      hint.textContent  = 'Listening — speak, then use a transcript below or stop.';
+      dlBtn.style.display = 'none'; startBtn.style.display = 'none'; stopBtn.style.display = '';
+      if (!sttPollTimer) sttPollTimer = setInterval(pollStt, 700);
+    } else {
+      badge.textContent = 'ready';
+      badge.style.color = '';
+      hint.textContent  = 'Model ready. Click start and speak — this uses the real microphone.';
+      dlBtn.style.display = 'none'; startBtn.style.display = ''; stopBtn.style.display = 'none';
+      if (sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
+    }
+  });
+}
+
+function downloadSttModel() {
+  const btn = document.getElementById('stt-download-btn');
+  btn.disabled = true; btn.textContent = 'downloading…';
+  apiCall('/api/stt/download', 'POST').then(data => {
+    btn.disabled = false; btn.textContent = 'DOWNLOAD MODEL (~40MB)';
+    if (data && data.ok) { logActivity('ok', 'Vosk model downloaded'); refreshSttStatus(); }
+    else { logActivity('warn', `Download failed: ${data ? data.error : 'offline'}`); }
+  });
+}
+
+function startListening() {
+  apiCall('/api/stt/start', 'POST').then(data => {
+    if (data && data.ok) { logActivity('ok', 'Listening started'); refreshSttStatus(); }
+    else { logActivity('warn', `Could not start listening: ${data ? data.error : 'offline'}`); }
+  });
+}
+
+function stopListening() {
+  apiCall('/api/stt/stop', 'POST').then(() => {
+    if (sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
+    document.getElementById('stt-partial').textContent = '';
+    logActivity('info', 'Listening stopped');
+    refreshSttStatus();
+  });
+}
+
+function pollStt() {
+  apiCall('/api/stt/poll').then(data => {
+    if (!data) return;
+    document.getElementById('stt-partial').textContent = data.partial ? `"${data.partial}…"` : '';
+    if (data.error) { logActivity('warn', `STT error: ${data.error}`); }
+    if (!data.listening) { refreshSttStatus(); return; }
+    (data.finals || []).forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'emem-item';
+      item.innerHTML =
+        `<div class="emem-a">${escHtml(f.text)}</div>` +
+        `<div class="emem-meta">${escHtml(f.ts || '')} <button class="sm" style="margin-left:8px">USE IN CHAT</button></div>`;
+      item.querySelector('button').onclick = () => {
+        document.getElementById('chat-input').value = f.text;
+        showView('chat', document.querySelector(".nav-item[onclick*=\"'chat'\"]"));
+      };
+      document.getElementById('stt-finals').prepend(item);
+    });
   });
 }
 

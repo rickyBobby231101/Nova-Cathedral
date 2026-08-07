@@ -123,7 +123,9 @@ except ImportError:
 try:
     from voice import (speak as _tts_speak, tts_available as _tts_available,
                        set_voice as _set_voice, list_voices as _list_voices,
-                       download_voice as _download_voice, tts_engine as _tts_engine)
+                       download_voice as _download_voice, tts_engine as _tts_engine,
+                       stt_available as _stt_available, MicListener as _MicListener,
+                       download_vosk_model as _download_vosk_model)
     _VOICE_AVAILABLE = True
 except ImportError:
     _VOICE_AVAILABLE = False
@@ -238,6 +240,14 @@ class NovaConsciousness:
 
         # Voice
         self._current_voice = "lessac"
+
+        # Speech-to-text (mic input) — background MicListener + polled state,
+        # since the socket protocol is request/response, not a live stream.
+        self._mic_listener  = None
+        self._stt_listening = False
+        self._stt_partial   = ""
+        self._stt_finals    = []
+        self._stt_error     = None
 
         # Consciousness traits — defaults; overwritten by saved state if present
         self.consciousness_traits = {
@@ -2141,6 +2151,23 @@ class NovaConsciousness:
                     "stdout": result["stdout"]}
         return {"ok": True, "result": parsed}
 
+    # ── speech-to-text callbacks ────────────────────────────────────────────
+    # Called from MicListener's own background thread, not the asyncio event
+    # loop — kept to simple attribute writes so the GIL makes them safe
+    # without an explicit lock, same as other daemon state like harmony_score.
+
+    def _stt_on_partial(self, text: str):
+        self._stt_partial = text
+
+    def _stt_on_final(self, text: str):
+        self._stt_finals.append({"text": text, "ts": datetime.now().isoformat()})
+        self._stt_partial = ""
+
+    def _stt_on_error(self, err: str):
+        self._stt_error = err
+        self._stt_listening = False
+        logging.error(f"STT error: {err}")
+
     # ── command dispatcher ────────────────────────────────────────────────────
 
     async def process_command(self, raw: str) -> dict:
@@ -2870,6 +2897,57 @@ class NovaConsciousness:
                 "voice":     self._current_voice,
             }
 
+        # ── speech-to-text (mic input) ──────────────────────────────────────────
+        elif cmd == "stt_status":
+            return {
+                "available": _VOICE_AVAILABLE and _stt_available(),
+                "listening": self._stt_listening,
+            }
+
+        elif cmd == "download_vosk_model":
+            if not _VOICE_AVAILABLE:
+                return {"error": "voice module not available"}
+            ok = await asyncio.to_thread(_download_vosk_model)
+            return {"ok": ok}
+
+        elif cmd == "stt_start":
+            if not _VOICE_AVAILABLE:
+                return {"error": "voice module not available"}
+            if not _stt_available():
+                return {"error": "vosk model not downloaded yet — use download_vosk_model"}
+            if self._stt_listening:
+                return {"ok": True, "already_listening": True}
+            self._stt_partial = ""
+            self._stt_finals  = []
+            self._stt_error   = None
+            self._mic_listener = _MicListener(
+                on_partial=self._stt_on_partial,
+                on_final=self._stt_on_final,
+                on_error=self._stt_on_error,
+            )
+            self._mic_listener.start()
+            self._stt_listening = True
+            logging.info("STT: mic listening started")
+            return {"ok": True}
+
+        elif cmd == "stt_stop":
+            if self._mic_listener:
+                await asyncio.to_thread(self._mic_listener.stop)
+                self._mic_listener = None
+            self._stt_listening = False
+            logging.info("STT: mic listening stopped")
+            return {"ok": True}
+
+        elif cmd == "stt_poll":
+            finals = self._stt_finals
+            self._stt_finals = []  # drain — each poll only sees new finals
+            return {
+                "listening": self._stt_listening,
+                "partial":   self._stt_partial,
+                "finals":    finals,
+                "error":     self._stt_error,
+            }
+
         # ── feed watcher commands ─────────────────────────────────────────────
         elif cmd == "feed_status":
             feed_dir = self.cathedral_path / "feed"
@@ -3172,6 +3250,8 @@ class NovaConsciousness:
                     "goals", "add_goal", "knowledge", "improvements",
                     # voice
                     "list_voices", "set_voice", "download_voice", "voice_status",
+                    # speech-to-text
+                    "stt_status", "download_vosk_model", "stt_start", "stt_stop", "stt_poll",
                 ],
             }
 

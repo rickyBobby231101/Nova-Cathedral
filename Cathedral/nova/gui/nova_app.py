@@ -502,6 +502,28 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("speak", timeout=15.0, text=text)
             return result or {"error": "daemon unreachable"}
 
+        # ── speech-to-text (mic input) ──────────────────────────────────────
+        if path == "/api/stt/status":
+            result = _daemon_call("stt_status", timeout=5.0)
+            return result or {"available": False, "listening": False}
+
+        if path == "/api/stt/download" and method == "POST":
+            # Pulls a ~40MB vosk model — generous timeout for slow connections.
+            result = _daemon_call("download_vosk_model", timeout=120.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/stt/start" and method == "POST":
+            result = _daemon_call("stt_start", timeout=10.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/stt/stop" and method == "POST":
+            result = _daemon_call("stt_stop", timeout=10.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/stt/poll":
+            result = _daemon_call("stt_poll", timeout=5.0)
+            return result or {"listening": False, "partial": "", "finals": [], "error": "daemon unreachable"}
+
         # File-drop bridge (~/cathedral/bridge/) — async Claude Code <-> Nova
         # message exchange, separate from the Bridge Walker / real Claude
         # bridge above. Reads the actual directories rather than a hardcoded
