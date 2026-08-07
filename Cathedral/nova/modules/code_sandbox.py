@@ -28,12 +28,14 @@ _BLOCKED = [
     r"\bos\.popen\s*\(",
     r"\bsubprocess\s*\.\s*(?:run|call|Popen|check_output|getoutput)\s*\(",
     r"\beval\s*\(",
+    r"\bexec\s*\(",
     r"\bcompile\s*\(",
     r"__import__\s*\(",
     r"\bimport\s+subprocess\b",
     r"\bimport\s+ctypes\b",
     r"shutil\s*\.\s*rmtree",
     r"os\s*\.\s*remove\s*\(\s*['\"](?!/home/\w+/cathedral)",   # only allow removing inside cathedral
+    r"os\s*\.\s*unlink\s*\(\s*['\"](?!/home/\w+/cathedral)",   # unlink is remove's unrestricted twin
 ]
 
 _BLOCKED_RE = re.compile("|".join(_BLOCKED), re.IGNORECASE)
