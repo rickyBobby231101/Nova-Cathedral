@@ -828,9 +828,23 @@ class NovaConsciousness:
                 (from_id, to_id, strength, resonance, datetime.now().isoformat())
             )
 
-    def _knowledge_graph_data(self, domain: str = "", limit: int = 80) -> dict:
-        """Return graph data: nodes + edges for visualization."""
+    def _knowledge_graph_data(self, domain: str = "", limit: int = 2000) -> dict:
+        """Return graph data: nodes + edges for visualization.
+
+        limit is a safety cap against pathological growth, not a page size —
+        it's set high enough that real usage shouldn't hit it. total_nodes/
+        total_edges/truncated let the caller detect and surface it honestly
+        if it ever does, instead of silently dropping older nodes and any
+        edge that touches them.
+        """
         with sqlite3.connect(self.db_path) as con:
+            count_q = "SELECT COUNT(*) FROM knowledge_nodes"
+            count_params: list = []
+            if domain:
+                count_q += " WHERE domain=?"; count_params.append(domain)
+            total_nodes = con.execute(count_q, count_params).fetchone()[0]
+            total_edges = con.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
+
             q = "SELECT id, domain, label, content, weight FROM knowledge_nodes"
             params: list = []
             if domain:
@@ -848,7 +862,9 @@ class NovaConsciousness:
                      if r[0] in node_ids and r[1] in node_ids]
         domains = list({n["domain"] for n in nodes})
         return {"nodes": nodes, "edges": edges, "domains": domains,
-                "harmony": self.harmony_score}
+                "harmony": self.harmony_score,
+                "total_nodes": total_nodes, "total_edges": total_edges,
+                "truncated": len(nodes) < total_nodes}
 
     async def _weaver_connect(self, new_node_id: int, new_content: str, domain: str):
         """Ask the Weaver to find connections from new knowledge to existing nodes."""
@@ -1182,6 +1198,25 @@ class NovaConsciousness:
         if count:
             logging.info(f"Nova generated {count} new autonomous goals")
 
+    _REFUSAL_PATTERNS = re.compile(
+        r"\bI (?:cannot|can't|won'?t|will not) provide\b"
+        r"|\bI(?:'m| am) (?:not able|unable) to\b"
+        r"|\bas an AI\b"
+        r"|\bI (?:cannot|can't) (?:assist|help) with\b"
+        r"|\bI (?:do not|don'?t) feel comfortable\b",
+        re.I,
+    )
+
+    def _looks_like_refusal(self, text: str) -> bool:
+        """Small local models occasionally trip their own safety training on
+        Cathedral-mythos phrasing ('sacred', 'ritual', etc.) and refuse
+        instead of answering. Catch that before it gets stored as knowledge —
+        checking only the start of the response keeps this cheap and avoids
+        false positives from a refusal merely being *quoted* later on."""
+        if not text:
+            return False
+        return bool(self._REFUSAL_PATTERNS.search(text[:300]))
+
     async def _process_goal(self, goal: dict):
         """Execute one goal — research it and store the finding."""
         gid    = goal["id"]
@@ -1245,6 +1280,11 @@ class NovaConsciousness:
                 return
 
             _, synthesis = self._parse_reasoning(result["response"])
+            if self._looks_like_refusal(synthesis):
+                _evo.fail_goal(self.db_path, gid, "Model declined to answer (safety refusal)")
+                logging.info(f"Goal hit a refusal, not stored as knowledge: {text[:50]}")
+                await self._ask_chazel_about_dead_end(gid, text)
+                return
             _evo.complete_goal(self.db_path, gid, synthesis)
             _evo.store_knowledge(self.db_path, goal.get("domain", "general"),
                                  synthesis, source=method, goal_id=gid)
@@ -2064,7 +2104,7 @@ class NovaConsciousness:
 
         elif cmd == "knowledge_graph":
             domain = d.get("domain", "")
-            limit  = int(d.get("limit", 80))
+            limit  = int(d.get("limit", 2000))
             return self._knowledge_graph_data(domain=domain, limit=limit)
 
         elif cmd == "knowledge_domains":

@@ -2160,7 +2160,9 @@ async function loadKnowledgeGraph(domain = '') {
   kgNodes = data.nodes || [];
   kgEdges = data.edges || [];
   if (data.harmony != null) kgHarmony = data.harmony;
-  document.getElementById('kg-node-count').textContent = `${kgNodes.length} nodes`;
+  document.getElementById('kg-node-count').textContent = data.truncated
+    ? `${kgNodes.length} of ${data.total_nodes} nodes (showing most recent)`
+    : `${kgNodes.length} nodes`;
   renderKnowledgeGraph();
   loadKnowledgeDomains();
 }
@@ -2253,19 +2255,31 @@ function renderRoseWindow(svg, nodes, edges, opts = {}) {
     }
     s += `</g>`;
 
-    // Place this domain's nodes along the petal axis (heaviest nearest the centre)
+    // Place this domain's nodes in a polar grid filling the petal wedge —
+    // a single radial line (the old approach) works for a handful of nodes
+    // but collapses into an unreadable stack once a domain has dozens, since
+    // domain sizes here are wildly uneven (e.g. 50 vs 1 in the same window).
     if (domain) {
       const dn = (nodesByDomain[domain] || []).slice()
         .sort((a, b) => (b.weight || 1) - (a.weight || 1));
-      const r0 = rBase + 26, r1 = rTip - 44;
+      const r0 = rBase + 24, r1 = rTip - 30;
+      const crowded  = dn.length > 6;
+      const rings    = Math.max(1, Math.ceil(Math.sqrt(dn.length)));
+      const perRing  = Math.max(1, Math.ceil(dn.length / rings));
+      const rScale   = crowded ? Math.max(0.4, Math.min(1, 3.2 / Math.sqrt(dn.length))) : 1;
       dn.forEach((n, k) => {
-        const t  = dn.length === 1 ? 0.32 : k / (dn.length - 1);
-        const ja = dn.length > 3 ? (k % 2 ? 1 : -1) * halfW * 0.3 : 0;
-        const [nx, ny] = P(r0 + t * (r1 - r0), theta + ja);
+        const ring       = Math.floor(k / perRing);
+        const posInRing  = k % perRing;
+        const ringCount  = Math.min(perRing, dn.length - ring * perRing);
+        const rt = rings === 1 ? 0.5 : ring / (rings - 1);
+        const at = ringCount === 1 ? 0.5 : posInRing / (ringCount - 1);
+        const angle = theta + (at - 0.5) * halfW * 1.7;
+        const [nx, ny] = P(r0 + rt * (r1 - r0), angle);
         n._x = nx; n._y = ny;
         n._color = col;
-        n._r = Math.max(5, Math.min(13, 5.5 + (n.weight || 1) * 2.5)) * (compact ? 0.85 : 1);
+        n._r = Math.max(3.5, Math.min(13, 5.5 + (n.weight || 1) * 2.5)) * (compact ? 0.85 : 1) * rScale;
         n._dim = dimmed;
+        n._hideLabel = crowded;
       });
     }
   }
@@ -2295,7 +2309,7 @@ function renderRoseWindow(svg, nodes, edges, opts = {}) {
       <circle cx="${n._x.toFixed(1)}" cy="${n._y.toFixed(1)}" r="${n._r.toFixed(1)}"
         fill="${n._color}${A(0.16 + 0.22 * light)}" stroke="${n._color}" stroke-width="${sw}"
         opacity="${n._dim ? 0.25 : 1}"/>`;
-    if (!compact) {
+    if (!compact && (!n._hideLabel || sel)) {
       s += `<text x="${n._x.toFixed(1)}" y="${(n._y + n._r + 10).toFixed(1)}" text-anchor="middle"
         fill="${n._color}" font-size="8" font-family="monospace" opacity="${n._dim ? 0.25 : 0.9}"
         style="pointer-events:none">${escHtml((n.label || '').substring(0, 16))}</text>`;

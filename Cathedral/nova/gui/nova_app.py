@@ -417,7 +417,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         # ── knowledge graph ───────────────────────────────────────────────────
         if path == "/api/knowledge/graph":
             domain = qs.get("domain", [""])[0]
-            limit  = int(qs.get("limit", ["80"])[0])
+            limit  = int(qs.get("limit", ["2000"])[0])
             result = _daemon_call("knowledge_graph", timeout=5.0,
                                   domain=domain, limit=limit)
             return result or {"nodes": [], "edges": [], "domains": [], "harmony": 0.5}
