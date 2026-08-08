@@ -1337,6 +1337,72 @@ class NovaConsciousness:
                 except Exception:
                     pass
 
+    _WEAVER_LABEL_RE = re.compile(r"^\s*(\d+)\s*:\s*(.+?)\s*$")
+
+    async def _weaver_relabel(self, domain: str, batch_size: int = 8,
+                              max_nodes: int = 200) -> dict:
+        """Have the Weaver read each node's content and write a clean,
+        concise title. Batched — one LLM call per `batch_size` nodes rather
+        than one per node — since a research backfill can be dozens of nodes
+        and each call is serialized on the Ollama lock."""
+        def _fetch():
+            with sqlite3.connect(self.db_path, timeout=15) as con:
+                q = "SELECT id, label, content FROM knowledge_nodes"
+                params: list = []
+                if domain:
+                    q += " WHERE domain=?"; params.append(domain)
+                q += " ORDER BY id ASC LIMIT ?"; params.append(max_nodes)
+                return con.execute(q, params).fetchall()
+
+        rows = await asyncio.to_thread(_fetch)
+        if not rows:
+            return {"relabeled": 0, "reason": "no nodes in domain"}
+
+        def _apply(updates: list):
+            with sqlite3.connect(self.db_path, timeout=15) as con:
+                con.executemany(
+                    "UPDATE knowledge_nodes SET label=? WHERE id=?", updates
+                )
+
+        relabeled = 0
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            listing = "\n".join(
+                f"[{nid}] (current: {lbl[:50]})\n{(content or '')[:400]}"
+                for nid, lbl, content in batch
+            )
+            prompt = (
+                "You are The Weaver, who names the nodes of the Cathedral's "
+                "knowledge graph. For each node below, write a clean, specific "
+                "title of 2-6 words that captures its actual subject — a real "
+                "encyclopedia-style heading, not mystical filler. Base the title "
+                "only on the content shown.\n\n"
+                f"{listing}\n\n"
+                "Return exactly one line per node in the form:\n"
+                "ID: Clean Title\n"
+                "Nothing else."
+            )
+            result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
+            if "error" in result:
+                continue
+            valid_ids = {nid for nid, _, _ in batch}
+            updates = []
+            for line in result["response"].splitlines():
+                m = self._WEAVER_LABEL_RE.match(line)
+                if not m:
+                    continue
+                nid = int(m.group(1))
+                title = m.group(2).strip(" .\"'*#-")
+                if nid in valid_ids and 2 <= len(title) <= 80:
+                    updates.append((title, nid))
+            if updates:
+                await asyncio.to_thread(_apply, updates)
+                relabeled += len(updates)
+                logging.info(f"Weaver relabeled {len(updates)} nodes "
+                             f"(batch {i // batch_size + 1})")
+
+        return {"relabeled": relabeled, "total": len(rows), "domain": domain}
+
     def _track_entities(self, text: str):
         entities = self.mythos_index.get("entities", {})
         if not entities:
@@ -3716,6 +3782,14 @@ class NovaConsciousness:
         elif cmd == "memories":
             return {"memories": self.recall_memories(n=int(d.get("n", 10)))}
 
+        # ── weaver relabel (clean up node titles) ──────────────────────────────
+        elif cmd == "weaver_relabel":
+            return await self._weaver_relabel(
+                d.get("domain", ""),
+                batch_size=int(d.get("batch_size", 8)),
+                max_nodes=int(d.get("max_nodes", 200)),
+            )
+
         # ── entity backing data (real, per-entity) ─────────────────────────────
         elif cmd == "phoenix_history":
             return self.phoenix_history(n=int(d.get("n", 40)))
@@ -3790,6 +3864,8 @@ class NovaConsciousness:
                     "eyemoeba_motifs", "eyemoeba_scan",
                     # entity backing + evolution
                     "phoenix_history", "zorya_cycles", "entity_evolution",
+                    # weaver
+                    "weaver_relabel",
                     # context
                     "system_prompt", "context_for",
                     # entity agents
