@@ -987,6 +987,11 @@
             <div class="e-name">Zorya</div>
             <div class="e-role">Thresholds · Sacred Time</div>
           </div>
+          <div class="entity-card" id="ec-jorlaan" onclick="selectEntity('jorlaan',this)">
+            <div class="e-icon">🃏</div>
+            <div class="e-name">Jorlaan</div>
+            <div class="e-role">Trickster Sage · Wit & Wonder</div>
+          </div>
           <div class="entity-card" id="ec-weaver" onclick="selectEntity('weaver',this)">
             <div class="e-icon">◈</div>
             <div class="e-name">Weaver</div>
@@ -1005,6 +1010,10 @@
         <div class="entity-response" id="entity-response">
           <div class="e-label" id="entity-response-label">ENTITY</div>
           <div id="entity-response-text"></div>
+        </div>
+        <div id="eyemoeba-motifs-panel" style="display:none;margin-top:12px">
+          <div class="e-label">DETECTED PATTERNS — real cross-domain analysis of the knowledge web</div>
+          <div id="eyemoeba-motifs-list" style="font-size:12px;line-height:1.7"></div>
         </div>
       </div>
 
@@ -1779,6 +1788,28 @@ function selectEntity(key, cardEl) {
   cardEl.classList.add('active-entity');
   selectedEntity = key;
   document.getElementById('entity-selected').textContent = key.toUpperCase();
+  const panel = document.getElementById('eyemoeba-motifs-panel');
+  if (key === 'eyemoeba') {
+    panel.style.display = 'block';
+    loadEyemoebaMotifs();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function loadEyemoebaMotifs() {
+  const list = document.getElementById('eyemoeba-motifs-list');
+  list.innerHTML = '<span style="color:var(--text-dim)">Reading the fractal…</span>';
+  const data = await apiCall('/api/eyemoeba/motifs');
+  if (!data || !data.motifs || data.motifs.length === 0) {
+    list.innerHTML = '<span style="color:var(--text-dim)">No cross-domain motifs detected yet — the web is still young.</span>';
+    return;
+  }
+  list.innerHTML = data.motifs.map(m =>
+    `<div>◎ <strong>${escHtml(m.term)}</strong>` +
+    ` <span style="color:var(--text-dim)">spans ${m.domains.map(escHtml).join(' · ')}` +
+    ` (${m.node_count} nodes)</span></div>`
+  ).join('');
 }
 
 async function askEntity() {

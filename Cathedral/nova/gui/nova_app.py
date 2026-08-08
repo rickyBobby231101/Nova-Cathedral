@@ -409,6 +409,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("reflections", timeout=5.0, n=30)
             return result or {"reflections": []}
 
+        # ── eyemoeba motifs (real cross-domain pattern analysis) ────────────────
+        if path == "/api/eyemoeba/motifs":
+            result = _daemon_call("eyemoeba_motifs", timeout=5.0, n=20)
+            return result or {"motifs": []}
+
         # ── the crypt (compressed memory archive) ────────────────────────────────
         if path == "/api/crypt/status":
             result = _daemon_call("crypt_status", timeout=5.0)

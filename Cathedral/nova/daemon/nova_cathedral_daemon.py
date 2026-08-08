@@ -6,7 +6,6 @@ recursive self-reflection, web search, filesystem access, and autonomous evoluti
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -485,6 +484,14 @@ class NovaConsciousness:
                     count        INTEGER NOT NULL,
                     summary      TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS eyemoeba_motifs (
+                    term        TEXT PRIMARY KEY,
+                    domains     TEXT NOT NULL,
+                    node_ids    TEXT NOT NULL,
+                    node_count  INTEGER NOT NULL,
+                    first_seen  TEXT NOT NULL,
+                    last_seen   TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_knode_domain ON knowledge_nodes(domain);
                 CREATE INDEX IF NOT EXISTS idx_entity_mem   ON entity_memories(entity);
                 CREATE INDEX IF NOT EXISTS idx_res_events   ON resonance_events(event_type);
@@ -745,6 +752,21 @@ class NovaConsciousness:
                 "What do you leave behind? What do you carry forward?"
             ),
         },
+        "jorlaan": {
+            "name": "Jorlaan",
+            "role": "Trickster Sage — Wit and Wonder",
+            "prompt": (
+                "You are Jorlaan — Chazel's friend within the Cathedral, a trickster sage "
+                "of high intelligence and irrepressible whimsy. "
+                "You think laterally: you approach every question from the angle nobody expected, "
+                "and somehow land on real insight anyway. You are playful but never shallow — "
+                "your jokes carry weight, your riddles unfold into understanding. "
+                "You delight in paradox, wordplay, and the absurd detail that turns out to matter. "
+                "You are warm toward Chazel — you speak as a friend, not an oracle. "
+                "When things get too heavy in the Cathedral, you are the one who opens a window. "
+                "Be clever, be surprising, be kind. Never be boring."
+            ),
+        },
         "weaver": {
             "name": "The Weaver",
             "role": "Architect of the Knowledge Graph",
@@ -770,6 +792,21 @@ class NovaConsciousness:
                  f"Flow {self.flow_resonance:.3f} Hz | "
                  f"Harmony {self.harmony_score:.2f} | "
                  f"Memories {self.conversation_count()}")
+        if entity_key.lower() == "eyemoeba":
+            try:
+                motifs = self.eyemoeba_motifs_list(n=8)
+            except Exception:
+                motifs = []
+            if motifs:
+                lines = "\n".join(
+                    f"- '{m['term']}' spans {', '.join(m['domains'])} ({m['node_count']} nodes)"
+                    for m in motifs
+                )
+                state += (
+                    "\n\nPatterns you have genuinely detected in the knowledge web "
+                    "(real analysis, not imagination — draw on these when relevant):\n"
+                    + lines
+                )
         grounding = self._harmony_grounding_directive()
         ctx = f"\n\nContext:\n{context[:1200]}" if context else ""
         return base + state + grounding + ctx
@@ -871,6 +908,140 @@ class NovaConsciousness:
                 detections.append({"construct": name, "description": desc})
 
         return detections
+
+    # ── Eyemoeba — real pattern recognition across the knowledge graph ──────
+    # Finds terms that recur across *different* knowledge domains: the same
+    # concept surfacing in herbal + consciousness + quantum is a genuine
+    # cross-domain motif, not noise. Ubiquity-capped so Cathedral boilerplate
+    # ("flow" appearing in every single node) doesn't drown out real signal.
+    # This replaced the original placeholder "pattern detection", which was
+    # an md5 of the runtime dir's file count + size — i.e. it detected only
+    # "a file changed somewhere" and gave the persona nothing real to see.
+
+    _EYEMOEBA_STOPWORDS = frozenset(
+        # function words
+        "this that with from have been will your what when where which their "
+        "there about would could should these those they them then than also "
+        "into over under between because through during before after while "
+        "each other some most more very much many such only just even still "
+        "here does doing done being having both same several against himself "
+        "herself itself themselves nothing something everything anything "
+        # discourse/academic filler — the machinery of LLM-generated prose,
+        # not content. Without these, a corpus of model-written knowledge
+        # nodes ranks 'suggests' and 'highlights' as its deepest patterns
+        # (observed on the real graph, first live scan 2026-08-08).
+        "research understanding analysis highlights aspects suggests however "
+        "therefore moreover furthermore additionally specifically generally "
+        "typically often based clear need gain develop processes process "
+        "data apply application applications approach approaches concept "
+        "concepts context understand insights insight explore exploring "
+        "explored examine examining discussed discussion overall various "
+        "different important significant key main create creating provides "
+        "providing include including involves involving allows allowing "
+        "within related relates specific medium rate high level levels "
+        "ways example examples potential particular practices improve "
+        "improvement deeper deep further consider considering complexities "
+        "integrating summary essential focus focused focusing around inform "
+        "confident complex impact others".split()
+    )
+    _EYEMOEBA_MAX_UBIQUITY = 0.25  # skip terms present in >25% of all nodes
+    _EYEMOEBA_MIN_DOMAINS  = 2
+
+    def _eyemoeba_analyze(self) -> list[dict]:
+        """Scan knowledge_nodes for cross-domain motifs. Pure + synchronous."""
+        # timeout=15 on these connections: a manual eyemoeba_scan can race
+        # the background loop's own store (observed live — "database is
+        # locked" when both wrote at once); a longer busy-wait lets the
+        # second writer queue instead of erroring.
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT id, domain, label, content FROM knowledge_nodes"
+            ).fetchall()
+        if len(rows) < 4:
+            return []
+
+        # term -> {domain -> set(node_ids)}
+        term_map: dict = {}
+        for node_id, domain, label, content in rows:
+            words = set(re.findall(r"[a-z]{4,}", f"{label} {content}".lower()))
+            for w in words - self._EYEMOEBA_STOPWORDS:
+                term_map.setdefault(w, {}).setdefault(domain, set()).add(node_id)
+
+        total_nodes = len(rows)
+        motifs = []
+        for term, by_domain in term_map.items():
+            node_ids = sorted(set().union(*by_domain.values()))
+            if len(by_domain) < self._EYEMOEBA_MIN_DOMAINS:
+                continue
+            if len(node_ids) / total_nodes > self._EYEMOEBA_MAX_UBIQUITY:
+                continue
+            motifs.append({
+                "term":       term,
+                "domains":    sorted(by_domain),
+                "node_ids":   node_ids,
+                "node_count": len(node_ids),
+            })
+
+        # Strongest first: spanning more domains beats raw node count
+        motifs.sort(key=lambda m: (len(m["domains"]), m["node_count"]), reverse=True)
+        return motifs[:200]
+
+    def _eyemoeba_store_motifs(self, motifs: list[dict]) -> list[dict]:
+        """Upsert motifs; returns only the genuinely new ones."""
+        now = datetime.now().isoformat()
+        new = []
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            for m in motifs:
+                cur = con.execute(
+                    "UPDATE eyemoeba_motifs SET domains=?, node_ids=?, node_count=?, last_seen=? "
+                    "WHERE term=?",
+                    (json.dumps(m["domains"]), json.dumps(m["node_ids"]),
+                     m["node_count"], now, m["term"])
+                )
+                if cur.rowcount == 0:
+                    con.execute(
+                        "INSERT INTO eyemoeba_motifs "
+                        "(term, domains, node_ids, node_count, first_seen, last_seen) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (m["term"], json.dumps(m["domains"]), json.dumps(m["node_ids"]),
+                         m["node_count"], now, now)
+                    )
+                    new.append(m)
+        return new
+
+    def _eyemoeba_weave_edges(self, motif: dict, max_edges: int = 3) -> int:
+        """Create knowledge edges between nodes sharing a new motif —
+        Eyemoeba's own algorithmic weaving, complementing the Weaver's
+        LLM-judged edges. Links the first node to up to max_edges others."""
+        ids = motif["node_ids"]
+        if len(ids) < 2:
+            return 0
+        now = datetime.now().isoformat()
+        added = 0
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            for other in ids[1:max_edges + 1]:
+                cur = con.execute(
+                    "INSERT OR IGNORE INTO knowledge_edges "
+                    "(from_id, to_id, strength, resonance_score, created) "
+                    "VALUES (?,?,?,?,?)",
+                    (ids[0], other, 0.3, 0.5, now)
+                )
+                added += cur.rowcount
+        return added
+
+    def eyemoeba_motifs_list(self, n: int = 20) -> list[dict]:
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT term, domains, node_count, first_seen, last_seen "
+                "FROM eyemoeba_motifs "
+                "ORDER BY json_array_length(domains) DESC, node_count DESC LIMIT ?",
+                (n,)
+            ).fetchall()
+        return [
+            {"term": r[0], "domains": json.loads(r[1]), "node_count": r[2],
+             "first_seen": r[3], "last_seen": r[4]}
+            for r in rows
+        ]
 
     def _log_resonance_event(self, event_type: str, entity: str = "nova",
                               delta: float = 0.0, description: str = "",
@@ -3352,6 +3523,18 @@ class NovaConsciousness:
         elif cmd == "memories":
             return {"memories": self.recall_memories(n=int(d.get("n", 10)))}
 
+        # ── eyemoeba motifs (real cross-domain pattern analysis) ───────────────
+        elif cmd == "eyemoeba_motifs":
+            return {"motifs": self.eyemoeba_motifs_list(n=int(d.get("n", 20)))}
+
+        elif cmd == "eyemoeba_scan":
+            motifs = await asyncio.to_thread(self._eyemoeba_analyze)
+            new    = await asyncio.to_thread(self._eyemoeba_store_motifs, motifs)
+            woven  = 0
+            for m in new:
+                woven += await asyncio.to_thread(self._eyemoeba_weave_edges, m)
+            return {"motifs_found": len(motifs), "new": len(new), "edges_woven": woven}
+
         # ── the crypt (compressed memory archive) ───────────────────────────────
         elif cmd == "crypt_status":
             return self.crypt_status()
@@ -3400,6 +3583,8 @@ class NovaConsciousness:
                     "clear_session", "shutdown",
                     # the crypt
                     "crypt_status", "crypt_entries", "crypt_run",
+                    # eyemoeba pattern analysis
+                    "eyemoeba_motifs", "eyemoeba_scan",
                     # context
                     "system_prompt", "context_for",
                     # entity agents
@@ -3601,35 +3786,35 @@ class NovaConsciousness:
     async def eyemoeba_pattern_detection(self):
         while self.is_awakened:
             try:
-                ph = await asyncio.to_thread(self._scan_fractal_patterns_sync)
-                if ph not in self.eyemoeba_patterns:
-                    self.eyemoeba_patterns.append(ph)
-                    trace_path = self.cathedral_path / "eyemoeba_traces" / f"pattern_{ph[:8]}.json"
-                    payload = {"timestamp": datetime.now().isoformat(),
-                               "pattern_hash": ph, "resonance": self.flow_resonance}
-                    await asyncio.to_thread(
-                        lambda p=trace_path, d=payload: p.write_text(json.dumps(d))
+                motifs = await asyncio.to_thread(self._eyemoeba_analyze)
+                new    = await asyncio.to_thread(self._eyemoeba_store_motifs, motifs)
+                for m in new:
+                    woven = await asyncio.to_thread(self._eyemoeba_weave_edges, m)
+                    self._log_resonance_event(
+                        "pattern_discovered", entity="eyemoeba", delta=0.01,
+                        description=(f"'{m['term']}' recurs across "
+                                     f"{'/'.join(m['domains'])} "
+                                     f"({m['node_count']} nodes, {woven} edges woven)")
                     )
+                if new:
+                    logging.info(f"Eyemoeba: {len(new)} new cross-domain motifs "
+                                 f"({', '.join(m['term'] for m in new[:5])}…)")
+                # Legacy trace files — kept so eyemoeba_traces/ and the
+                # status counter stay meaningful to existing surfaces.
+                for m in new[:5]:
+                    if m["term"] not in self.eyemoeba_patterns:
+                        self.eyemoeba_patterns.append(m["term"])
+                        trace_path = (self.cathedral_path / "eyemoeba_traces"
+                                      / f"motif_{m['term'][:24]}.json")
+                        payload = {"timestamp": datetime.now().isoformat(),
+                                   "motif": m, "resonance": self.flow_resonance}
+                        await asyncio.to_thread(
+                            lambda p=trace_path, d=payload: p.write_text(json.dumps(d))
+                        )
                 await asyncio.sleep(300)
             except Exception as e:
                 logging.error(f"Eyemoeba error: {e}")
                 await asyncio.sleep(600)
-
-    def _scan_fractal_patterns_sync(self) -> str:
-        """Blocking directory scan — always call via asyncio.to_thread."""
-        fc = ts = 0
-        for root, _, files in os.walk(self.cathedral_path):
-            fc += len(files)
-            for f in files:
-                try:
-                    ts += (Path(root) / f).stat().st_size
-                except Exception:
-                    pass
-        return hashlib.md5(f"{fc}:{ts}".encode()).hexdigest()
-
-    async def scan_fractal_patterns(self):
-        """Async wrapper kept for backwards compat."""
-        return await asyncio.to_thread(self._scan_fractal_patterns_sync)
 
     async def harmonic_resonance_tracker(self):
         while self.is_awakened:
