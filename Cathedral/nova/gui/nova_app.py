@@ -402,6 +402,20 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("reflections", timeout=5.0, n=30)
             return result or {"reflections": []}
 
+        # ── the crypt (compressed memory archive) ────────────────────────────────
+        if path == "/api/crypt/status":
+            result = _daemon_call("crypt_status", timeout=5.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/crypt/entries":
+            result = _daemon_call("crypt_entries", timeout=5.0, n=20)
+            return result or {"entries": []}
+
+        if path == "/api/crypt/run" and method == "POST":
+            # Same LLM-generation cost class as /api/reflect — give it room.
+            result = _daemon_call("crypt_run", timeout=150.0)
+            return result or {"error": "daemon unreachable"}
+
         # ── goals ─────────────────────────────────────────────────────────────
         # Nova's real, persistent autonomous goal system (daemon-backed) — not
         # the GUI's own state. There's no manual "mark complete": real goals

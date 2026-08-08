@@ -1038,6 +1038,19 @@
         </div>
         <div id="memory-list"><div class="empty-state">Search the archive or click ALL to load recent memories.</div></div>
       </div>
+      <div class="card">
+        <div class="card-title">The Crypt
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="crypt-status-line">—</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+          Old conversations beyond the active window get folded into a compressed summary — nothing is deleted, this just keeps the archive above from drowning in ancient history.
+        </div>
+        <div class="btn-row">
+          <button onclick="refreshCrypt()">REFRESH</button>
+          <button onclick="runCryptConsolidate()">COMPRESS NOW</button>
+        </div>
+        <div id="crypt-list" style="margin-top:10px"><div class="empty-state">Click REFRESH to view crypt entries.</div></div>
+      </div>
     </div>
 
     <!-- HERBAL LIBRARY -->
@@ -1497,7 +1510,7 @@ function showView(name, navEl) {
   if (name === 'goals') loadGoals();
   if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
-  if (name === 'memories') loadMemories();
+  if (name === 'memories') { loadMemories(); refreshCrypt(); }
   if (name === 'rosewindow') loadKnowledgeGraph('');
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
@@ -1868,6 +1881,52 @@ async function loadMemories(search='') {
 function searchMemories() {
   const q = document.getElementById('mem-search').value.trim();
   loadMemories(q);
+}
+
+// ── The Crypt ──────────────────────────────────────────────────────────────
+async function refreshCrypt() {
+  const line = document.getElementById('crypt-status-line');
+  const list = document.getElementById('crypt-list');
+  const status = await apiCall('/api/crypt/status');
+  if (status && !status.error) {
+    line.textContent = `${status.active} active · ${status.crypted} crypted · ${status.crypt_entries} entries`;
+  } else {
+    line.textContent = '—';
+  }
+  const data = await apiCall('/api/crypt/entries');
+  if (!data || !data.entries) {
+    list.innerHTML = '<div class="empty-state">No entries or API offline.</div>';
+    return;
+  }
+  if (data.entries.length === 0) {
+    list.innerHTML = '<div class="empty-state">Nothing folded into the Crypt yet.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  data.entries.forEach(e => {
+    const item = document.createElement('div');
+    item.className = 'mem-item';
+    item.innerHTML = `
+      <div class="mem-content">${escHtml(e.summary)}</div>
+      <div class="mem-meta">
+        <span>${e.ts || ''}</span>
+        <span>#${e.range_start}–#${e.range_end} (${e.count} conversations)</span>
+      </div>`;
+    list.appendChild(item);
+  });
+}
+
+async function runCryptConsolidate() {
+  const list = document.getElementById('crypt-list');
+  list.innerHTML = '<div class="empty-state">Compressing… this runs a full LLM generation, can take a minute.</div>';
+  const result = await apiCall('/api/crypt/run', 'POST');
+  if (result && result.consolidated) {
+    await refreshCrypt();
+  } else if (result && result.error) {
+    list.innerHTML = `<div class="empty-state">Failed: ${escHtml(result.error)}</div>`;
+  } else {
+    list.innerHTML = '<div class="empty-state">Nothing eligible yet — not enough old conversations beyond the active window.</div>';
+  }
 }
 
 // ── Herbal Library ────────────────────────────────────────────────────────────

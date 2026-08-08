@@ -98,7 +98,8 @@ Nova-Cathedral/
 `grep_files`, `goals`, `add_goal`, `knowledge`, `improvements`, `list_voices`,
 `set_voice`, `download_voice`, `voice_status`, `sysinfo`, `brain_stats`,
 `code_inspect`, `code_evolve`, `resilience_status`,
-`pending_questions`, `answer_question`, `teach`
+`pending_questions`, `answer_question`, `teach`,
+`crypt_status`, `crypt_entries`, `crypt_run`
 
 ### Plugin pattern
 

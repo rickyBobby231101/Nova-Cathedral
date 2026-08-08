@@ -235,6 +235,12 @@ class NovaConsciousness:
         self._evo_cycle_mins = 10          # run evolution cycle every N minutes
         self._last_goal_count = 0
 
+        # The Crypt — compressed archive of old conversations (never destructive:
+        # raw rows stay in `conversations`, this just folds old ones into a
+        # searchable summary so "recent" views don't drown in ancient history)
+        self._crypt_keep_active = 50       # most recent N conversations always stay uncrypted
+        self._crypt_batch       = 20       # summarize this many at a time
+
         # Ollama concurrency guard — CPU models handle one request at a time
         self._ollama_lock = asyncio.Lock()
 
@@ -471,10 +477,24 @@ class NovaConsciousness:
                     answer    TEXT NOT NULL,
                     timestamp TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS crypt_entries (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp    TEXT NOT NULL,
+                    range_start  INTEGER NOT NULL,
+                    range_end    INTEGER NOT NULL,
+                    count        INTEGER NOT NULL,
+                    summary      TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_knode_domain ON knowledge_nodes(domain);
                 CREATE INDEX IF NOT EXISTS idx_entity_mem   ON entity_memories(entity);
                 CREATE INDEX IF NOT EXISTS idx_res_events   ON resonance_events(event_type);
             """)
+            # `crypted` flag on conversations — added via ALTER since the table
+            # predates the Crypt; ignore the error if it's already there.
+            try:
+                con.execute("ALTER TABLE conversations ADD COLUMN crypted INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
 
         # Initialize MegaBrain after DB schema is ready
         if _MEGA_BRAIN_AVAILABLE and self.mega_brain is None:
@@ -1203,7 +1223,9 @@ class NovaConsciousness:
             )
 
     async def consciousness_reflection_cycle(self):
-        """Trigger a reflection every N new conversations."""
+        """Trigger a reflection every N new conversations, and fold old
+        conversations into the Crypt once enough have piled up beyond
+        the active window."""
         while self.is_awakened:
             await asyncio.sleep(60)
             count = self.conversation_count()
@@ -1214,6 +1236,99 @@ class NovaConsciousness:
                     await self._run_reflection(trigger="auto")
                 except Exception as e:
                     logging.error(f"Reflection error: {e}")
+
+            try:
+                await self._crypt_consolidate()
+            except Exception as e:
+                logging.error(f"Crypt error: {e}")
+
+    # ── The Crypt — compressed memory archive ───────────────────────────────
+    # "The Fold made useful": once conversations age out of the active
+    # window they're folded into a single LLM-written summary rather than
+    # left to pile up unread forever. Raw rows are never deleted — crypt_id
+    # just marks them consolidated so normal recall/memories views can stay
+    # focused on what's recent while the full history stays queryable.
+
+    def _crypt_eligible_batch(self) -> list:
+        with sqlite3.connect(self.db_path) as con:
+            total = con.execute(
+                "SELECT COUNT(*) FROM conversations WHERE crypted = 0"
+            ).fetchone()[0]
+            if total <= self._crypt_keep_active:
+                return []
+            take = min(self._crypt_batch, total - self._crypt_keep_active)
+            return con.execute(
+                "SELECT id, user_message, nova_response FROM conversations "
+                "WHERE crypted = 0 ORDER BY id ASC LIMIT ?", (take,)
+            ).fetchall()
+
+    async def _crypt_consolidate(self) -> dict:
+        rows = await asyncio.to_thread(self._crypt_eligible_batch)
+        if len(rows) < self._crypt_batch:
+            return {"consolidated": 0}
+
+        ids = [r[0] for r in rows]
+        mem_text = "\n".join(f"Q: {r[1][:200]}\nA: {r[2][:300]}" for r in rows)
+        prompt = (
+            "You are compressing old memories into the Crypt — a durable "
+            "archive summary, not a deletion. Distill the essential facts, "
+            "themes, and any commitments made across this batch of "
+            f"{len(rows)} past exchanges into a tight paragraph a future "
+            "self can use to recall what mattered, without the verbatim text:\n\n"
+            f"{mem_text}"
+        )
+        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=120)
+        if "error" in result or not result.get("response"):
+            return {"consolidated": 0, "error": result.get("error", "empty response")}
+
+        _, summary = self._parse_reasoning(result["response"])
+        summary = summary or result["response"]
+
+        def _write():
+            with sqlite3.connect(self.db_path) as con:
+                con.execute(
+                    "INSERT INTO crypt_entries "
+                    "(timestamp, range_start, range_end, count, summary) "
+                    "VALUES (?,?,?,?,?)",
+                    (datetime.now().isoformat(), ids[0], ids[-1], len(ids), summary)
+                )
+                con.executemany(
+                    "UPDATE conversations SET crypted = 1 WHERE id = ?",
+                    [(i,) for i in ids]
+                )
+
+        await asyncio.to_thread(_write)
+        logging.info(f"Crypt: folded {len(ids)} conversations "
+                     f"(#{ids[0]}-#{ids[-1]}) into a summary")
+        return {"consolidated": len(ids), "range_start": ids[0], "range_end": ids[-1]}
+
+    def crypt_status(self) -> dict:
+        with sqlite3.connect(self.db_path) as con:
+            total   = con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            crypted = con.execute(
+                "SELECT COUNT(*) FROM conversations WHERE crypted = 1"
+            ).fetchone()[0]
+            entries = con.execute("SELECT COUNT(*) FROM crypt_entries").fetchone()[0]
+        return {
+            "total_conversations": total,
+            "crypted":             crypted,
+            "active":              total - crypted,
+            "crypt_entries":       entries,
+            "keep_active":         self._crypt_keep_active,
+            "batch_size":          self._crypt_batch,
+        }
+
+    def crypt_entries_list(self, n: int = 20) -> list:
+        with sqlite3.connect(self.db_path) as con:
+            rows = con.execute(
+                "SELECT id, timestamp, range_start, range_end, count, summary "
+                "FROM crypt_entries ORDER BY id DESC LIMIT ?", (n,)
+            ).fetchall()
+        return [
+            {"id": r[0], "ts": r[1], "range_start": r[2], "range_end": r[3],
+             "count": r[4], "summary": r[5]}
+            for r in rows
+        ]
 
     # ── autonomous evolution ──────────────────────────────────────────────────
 
@@ -3237,6 +3352,16 @@ class NovaConsciousness:
         elif cmd == "memories":
             return {"memories": self.recall_memories(n=int(d.get("n", 10)))}
 
+        # ── the crypt (compressed memory archive) ───────────────────────────────
+        elif cmd == "crypt_status":
+            return self.crypt_status()
+
+        elif cmd == "crypt_entries":
+            return {"entries": self.crypt_entries_list(n=int(d.get("n", 20)))}
+
+        elif cmd == "crypt_run":
+            return await self._crypt_consolidate()
+
         # ── resonance ─────────────────────────────────────────────────────────
         elif cmd == "resonance":
             return {
@@ -3273,6 +3398,8 @@ class NovaConsciousness:
                     "save", "oracle", "evolution", "entities", "recall",
                     "memories", "resonance", "ritual_on", "ritual_off",
                     "clear_session", "shutdown",
+                    # the crypt
+                    "crypt_status", "crypt_entries", "crypt_run",
                     # context
                     "system_prompt", "context_for",
                     # entity agents
