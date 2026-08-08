@@ -944,7 +944,7 @@ class NovaConsciousness:
         "ways example examples potential particular practices improve "
         "improvement deeper deep further consider considering complexities "
         "integrating summary essential focus focused focusing around inform "
-        "confident complex impact others".split()
+        "confident complex impact others rather across".split()
     )
     _EYEMOEBA_MAX_UBIQUITY = 0.25  # skip terms present in >25% of all nodes
     _EYEMOEBA_MIN_DOMAINS  = 2
