@@ -51,7 +51,7 @@ Nova-Cathedral/
     │   │   └── web_search.py          # DuckDuckGo web search
     │   ├── nuclear/
     │   │   ├── memory/                # SQLite memory layer
-    │   │   └── monitoring/            # all_seeing_core.py — OS resource awareness
+    │   │   └── monitoring/            # (empty — all_seeing_core.py lives in plugins/)
     │   ├── plugins/                   # Pluggable modules (oracle, claude bridge, etc.)
     │   ├── nova_foundation.yaml       # Identity (observer=Chazel, model=llama3.2:1b, traits)
     │   └── system/                    # Installers, systemd service, docs
@@ -99,7 +99,10 @@ Nova-Cathedral/
 `set_voice`, `download_voice`, `voice_status`, `sysinfo`, `brain_stats`,
 `code_inspect`, `code_evolve`, `resilience_status`,
 `pending_questions`, `answer_question`, `teach`,
-`crypt_status`, `crypt_entries`, `crypt_run`
+`crypt_status`, `crypt_entries`, `crypt_run`,
+`eyemoeba_motifs`, `eyemoeba_scan`,
+`phoenix_history`, `zorya_cycles`, `entity_evolution`,
+`agent_ask`, `council_ask`, `entity_list`, `entity_memories`
 
 ### Plugin pattern
 
