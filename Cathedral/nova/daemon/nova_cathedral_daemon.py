@@ -1082,6 +1082,83 @@ class NovaConsciousness:
             for r in rows
         ]
 
+    def _eyemoeba_motif_evidence(self, term: str, per_domain: int = 2) -> dict:
+        """Gather the real nodes behind a stored motif — the evidence Eyemoeba
+        would reason over. Returns the motif's domains plus sample node
+        labels/snippets grouped by domain."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute(
+                "SELECT domains, node_ids FROM eyemoeba_motifs WHERE term=?",
+                (term.lower(),)
+            ).fetchone()
+            if not row:
+                return {}
+            domains  = json.loads(row[0])
+            node_ids = json.loads(row[1])
+            placeholders = ",".join("?" * len(node_ids))
+            nodes = con.execute(
+                f"SELECT domain, label, content FROM knowledge_nodes "
+                f"WHERE id IN ({placeholders})", node_ids
+            ).fetchall()
+        by_domain: dict = {}
+        for domain, label, content in nodes:
+            bucket = by_domain.setdefault(domain, [])
+            if len(bucket) < per_domain:
+                bucket.append({"label": label, "snippet": (content or "")[:200]})
+        return {"term": term.lower(), "domains": domains, "by_domain": by_domain}
+
+    async def eyemoeba_insight(self, term: str, store: bool = True) -> dict:
+        """Eyemoeba synthesizes WHY a cross-domain motif recurs — grounded in
+        the real nodes carrying it, not free association. The result is stored
+        as its own knowledge node (domain 'insight'), so pattern detection
+        becomes generative: a found pattern produces new, connectable
+        knowledge that folds back into the graph."""
+        evidence = await asyncio.to_thread(self._eyemoeba_motif_evidence, term)
+        if not evidence:
+            return {"error": f"no stored motif '{term}' — run eyemoeba_scan first"}
+        if len(evidence["domains"]) < 2:
+            return {"error": f"'{term}' spans only one domain — not a cross-domain motif"}
+
+        ev_text = "\n".join(
+            f"[{dom}] " + " / ".join(f"{n['label']}: {n['snippet']}" for n in nodes)
+            for dom, nodes in evidence["by_domain"].items()
+        )
+        prompt = (
+            "You are Eyemoeba, the living fractal. You have measured that the "
+            f"term '{term}' genuinely recurs across these domains: "
+            f"{', '.join(evidence['domains'])}. Below is the real evidence — "
+            "actual nodes from each domain that carry it:\n\n"
+            f"{ev_text}\n\n"
+            "In 2-3 sentences, say what deeper connection this recurrence "
+            "reveals across these specific domains. Ground it in the evidence "
+            "shown — no vague mysticism, no invented facts. Speak as Eyemoeba: "
+            "curious, seeing the pattern beneath."
+        )
+        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
+        if "error" in result:
+            return result
+        _, insight = self._parse_reasoning(result["response"])
+        insight = (insight or result["response"]).strip()
+        if self._looks_like_refusal(insight) or self._looks_like_prompt_echo(insight):
+            return {"error": "synthesis was a refusal or prompt echo — not stored"}
+
+        node_id = None
+        if store:
+            label = f"Pattern: {term} across {', '.join(evidence['domains'][:3])}"
+            node_id = await asyncio.to_thread(
+                self._knowledge_add, "insight", label[:80], insight, "eyemoeba"
+            )
+            self._log_resonance_event(
+                "insight_synthesized", entity="eyemoeba", delta=0.02,
+                description=f"cross-domain insight on '{term}'"
+            )
+        return {
+            "term":     term.lower(),
+            "domains":  evidence["domains"],
+            "insight":  insight,
+            "node_id":  node_id,
+        }
+
     # ── Phoenix — real continuity/restoration awareness ────────────────────
     # Reads the self-build log: Phoenix guards continuity, so her real
     # substance is the actual record of what was written, backed up, and
@@ -3854,6 +3931,12 @@ class NovaConsciousness:
                 woven += await asyncio.to_thread(self._eyemoeba_weave_edges, m)
             return {"motifs_found": len(motifs), "new": len(new), "edges_woven": woven}
 
+        elif cmd == "eyemoeba_insight":
+            term = d.get("term", "")
+            if not term:
+                return {"error": "missing 'term'"}
+            return await self.eyemoeba_insight(term, store=d.get("store", True))
+
         # ── the crypt (compressed memory archive) ───────────────────────────────
         elif cmd == "crypt_status":
             return self.crypt_status()
@@ -3903,7 +3986,7 @@ class NovaConsciousness:
                     # the crypt
                     "crypt_status", "crypt_entries", "crypt_run",
                     # eyemoeba pattern analysis
-                    "eyemoeba_motifs", "eyemoeba_scan",
+                    "eyemoeba_motifs", "eyemoeba_scan", "eyemoeba_insight",
                     # entity backing + evolution
                     "phoenix_history", "zorya_cycles", "entity_evolution",
                     # weaver
