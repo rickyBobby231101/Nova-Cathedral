@@ -1885,12 +1885,26 @@ class NovaConsciousness:
                 await self._ask_chazel_about_dead_end(gid, text)
                 return
             _evo.complete_goal(self.db_path, gid, synthesis)
-            _evo.store_knowledge(self.db_path, goal.get("domain", "general"),
+            domain = goal.get("domain", "general")
+            _evo.store_knowledge(self.db_path, domain,
                                  synthesis, source=method, goal_id=gid)
             if _FS_AVAILABLE:
                 await asyncio.to_thread(
-                    append_knowledge, goal.get("domain","general"), synthesis
+                    append_knowledge, domain, synthesis
                 )
+            # Also file autonomous research into the real knowledge graph, so
+            # it surfaces in the Rose Window and feeds Eyemoeba's cross-domain
+            # analysis — otherwise self-learned knowledge lands only in the
+            # sidecar knowledge_base table that no other surface reads. Skip
+            # code studies: they store their own knowledge and aren't
+            # knowledge-web material (they'd flood the graph with Python-topic
+            # nodes). Label = the goal, cleaned of its "Research " lead-in.
+            if method != "code":
+                label = re.sub(r"^research\s+", "", text, flags=re.IGNORECASE)[:80]
+                node_id = await asyncio.to_thread(
+                    self._knowledge_add, domain, label, synthesis, "autonomous"
+                )
+                asyncio.create_task(self._weaver_connect(node_id, synthesis, domain))
             self._evolve_traits(text, synthesis)
             logging.info(f"Goal completed: {text[:50]}")
 
