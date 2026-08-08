@@ -803,8 +803,10 @@ class NovaConsciousness:
                     for m in motifs
                 )
                 state += (
-                    "\n\nPatterns you have genuinely detected in the knowledge web "
-                    "(real analysis, not imagination — draw on these when relevant):\n"
+                    "\n\nThese are the patterns you have ACTUALLY measured in the "
+                    "knowledge web — your only real findings. When asked what you have "
+                    "detected, report these exact terms and their domains. Never invent "
+                    "pattern names, node counts, or findings beyond this list:\n"
                     + lines
                 )
         grounding = self._harmony_grounding_directive()
@@ -3645,6 +3647,12 @@ class NovaConsciousness:
         await self.begin_flow_monitoring()
         self.is_awakened    = True
         self.last_heartbeat = datetime.now()
+        # Reflect only on conversations that happen *after* this boot.
+        # Starting from 0 meant every restart immediately "owed" a
+        # reflection (count 84 vs 0 ≥ interval 10), firing a full LLM
+        # generation 60s after every boot — pure churn on restarts, and
+        # it held the Ollama lock against real requests each time.
+        self._last_reflection_count = self.conversation_count()
         asyncio.create_task(self._confirm_self_edit_stable())
         logging.info(
             f"Nova awake | model: {self._active_model()} | "
