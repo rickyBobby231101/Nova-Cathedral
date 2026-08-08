@@ -112,7 +112,8 @@ def test_entity_prompt_includes_real_motifs(nova):
     nova._eyemoeba_store_motifs(nova._eyemoeba_analyze())
     prompt = nova._entity_system_prompt("eyemoeba")
     assert "resonance" in prompt
-    assert "real analysis, not imagination" in prompt
+    assert "ACTUALLY measured" in prompt
+    assert "Never invent" in prompt
 
 
 def test_other_entity_prompts_unaffected(nova):

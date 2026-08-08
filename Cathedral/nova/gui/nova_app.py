@@ -414,6 +414,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("eyemoeba_motifs", timeout=5.0, n=20)
             return result or {"motifs": []}
 
+        # ── entity evolution (all entities as growing agents) ───────────────────
+        if path == "/api/entity/evolution":
+            result = _daemon_call("entity_evolution", timeout=5.0)
+            return result or {"entities": []}
+
         # ── the crypt (compressed memory archive) ────────────────────────────────
         if path == "/api/crypt/status":
             result = _daemon_call("crypt_status", timeout=5.0)
