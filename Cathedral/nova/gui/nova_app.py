@@ -99,6 +99,13 @@ def chat_reply(messages: list, timeout: float = 120.0) -> str:
         return f"[Ollama error: {r['error']}]"
     return r.get("message", {}).get("content", "")
 
+
+def _is_chat_error_reply(reply: str) -> bool:
+    """True if `reply` is one of /api/chat's bracketed error placeholders
+    rather than a real assistant turn — see the history-poisoning note
+    where this is used."""
+    return reply.startswith("[Reasoning call failed:") or reply.startswith("[Ollama error:")
+
 # ── Daemon socket proxy ───────────────────────────────────────────────────────
 
 def _daemon_call(command: str, timeout: float = 30.0, **kwargs) -> dict | None:
@@ -288,7 +295,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             # append too, so a failed exchange leaves no trace in the
             # ongoing context at all, rather than an orphaned user turn with
             # no reply.
-            is_error = reply.startswith("[Reasoning call failed:") or reply.startswith("[Ollama error:")
+            is_error = _is_chat_error_reply(reply)
             with _lock:
                 if is_error:
                     if (len(_state["history"]) > user_msg_index
