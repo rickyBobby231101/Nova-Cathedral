@@ -1050,15 +1050,47 @@ class NovaConsciousness:
                 urllib.request.urlopen(f"{url}/api/tags", timeout=2)
             except Exception:
                 raise RuntimeError("Ollama not running — start with: ollama serve")
+
+            # stream=True here, not the payload's stream=False, is what makes
+            # our own timeout actually cancel the generation instead of just
+            # abandoning it. A non-streaming request computes the entire
+            # response server-side before writing anything back, so Ollama
+            # never does any I/O to fail on and never notices a client that
+            # gave up — confirmed live: a timed-out reasoning call kept
+            # running as an orphaned process for several minutes afterward,
+            # burning CPU against every request queued behind it. Streaming
+            # writes one chunk per token, so closing the connection mid-
+            # stream turns into a broken pipe on Ollama's *next* write, which
+            # it does check for and abort on.
+            stream_payload = dict(payload, stream=True)
             req = urllib.request.Request(
                 f"{url}/api/chat",
-                data=json.dumps(payload).encode(),
+                data=json.dumps(stream_payload).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            t      = time.time()
-            result = json.loads(urllib.request.urlopen(req, timeout=timeout).read())
-            return result.get("message", {}).get("content", ""), round(time.time() - t, 2)
+            t    = time.time()
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            parts = []
+            try:
+                for line in resp:
+                    if time.time() - t > timeout:
+                        # The close() is the fix, not the exception — this is
+                        # what actually reaches Ollama and gets it to stop.
+                        resp.close()
+                        raise TimeoutError(f"Ollama response exceeded {timeout}s — aborted")
+                    line = line.strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    content = chunk.get("message", {}).get("content")
+                    if content:
+                        parts.append(content)
+                    if chunk.get("done"):
+                        break
+            finally:
+                resp.close()
+            return "".join(parts), round(time.time() - t, 2)
 
         try:
             async with self._ollama_lock:
