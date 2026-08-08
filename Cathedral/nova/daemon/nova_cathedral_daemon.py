@@ -1339,24 +1339,43 @@ class NovaConsciousness:
 
     _WEAVER_LABEL_RE = re.compile(r"^\s*(\d+)\s*:\s*(.+?)\s*$")
 
-    async def _weaver_relabel(self, domain: str, batch_size: int = 8,
-                              max_nodes: int = 200) -> dict:
+    # Framing/log words the research-synthesis model leaks into titles —
+    # a good encyclopedia heading never contains these.
+    _WEAVER_BANNED_TITLE_WORDS = (
+        "research", "update", "synthesis", "insights", "insight", "findings",
+        "connection", "connections", "analysis", "overview", "study",
+        "self-improvement", "autonomous",
+    )
+
+    async def _weaver_relabel(self, domain: str = "", ids: list = None,
+                              batch_size: int = 8, max_nodes: int = 200) -> dict:
         """Have the Weaver read each node's content and write a clean,
         concise title. Batched — one LLM call per `batch_size` nodes rather
         than one per node — since a research backfill can be dozens of nodes
-        and each call is serialized on the Ollama lock."""
+        and each call is serialized on the Ollama lock.
+
+        Pass `ids` to re-title a specific set of nodes (e.g. ones that drifted
+        on a prior pass); otherwise every node in `domain` is processed."""
+        id_set = {int(i) for i in ids} if ids else None
+
         def _fetch():
             with sqlite3.connect(self.db_path, timeout=15) as con:
                 q = "SELECT id, label, content FROM knowledge_nodes"
                 params: list = []
+                clauses = []
                 if domain:
-                    q += " WHERE domain=?"; params.append(domain)
+                    clauses.append("domain=?"); params.append(domain)
+                if id_set:
+                    clauses.append(f"id IN ({','.join('?' * len(id_set))})")
+                    params.extend(sorted(id_set))
+                if clauses:
+                    q += " WHERE " + " AND ".join(clauses)
                 q += " ORDER BY id ASC LIMIT ?"; params.append(max_nodes)
                 return con.execute(q, params).fetchall()
 
         rows = await asyncio.to_thread(_fetch)
         if not rows:
-            return {"relabeled": 0, "reason": "no nodes in domain"}
+            return {"relabeled": 0, "reason": "no matching nodes"}
 
         def _apply(updates: list):
             with sqlite3.connect(self.db_path, timeout=15) as con:
@@ -1364,7 +1383,19 @@ class NovaConsciousness:
                     "UPDATE knowledge_nodes SET label=? WHERE id=?", updates
                 )
 
+        def _is_clean(title: str) -> bool:
+            words = title.split()
+            if not (1 <= len(words) <= 5):
+                return False
+            low = title.lower()
+            if any(b in low for b in self._WEAVER_BANNED_TITLE_WORDS):
+                return False
+            if " - " in title or ":" in title:
+                return False
+            return True
+
         relabeled = 0
+        rejected  = 0
         for i in range(0, len(rows), batch_size):
             batch = rows[i:i + batch_size]
             listing = "\n".join(
@@ -1373,14 +1404,19 @@ class NovaConsciousness:
             )
             prompt = (
                 "You are The Weaver, who names the nodes of the Cathedral's "
-                "knowledge graph. For each node below, write a clean, specific "
-                "title of 2-6 words that captures its actual subject — a real "
-                "encyclopedia-style heading, not mystical filler. Base the title "
-                "only on the content shown.\n\n"
+                "knowledge graph. For each node, write a clean encyclopedia "
+                "heading of 2 to 4 words naming the node's ACTUAL SUBJECT, "
+                "based only on the content shown.\n"
+                "STRICT RULES:\n"
+                "- 2 to 4 words. No more.\n"
+                "- Name the concrete topic (e.g. 'Echoic Memory', "
+                "'Fractal Leaf Geometry').\n"
+                "- NEVER use meta words: research, synthesis, insights, "
+                "findings, update, analysis, connection, self-improvement.\n"
+                "- No colons, no dashes joining two topics, no mystical filler.\n\n"
                 f"{listing}\n\n"
-                "Return exactly one line per node in the form:\n"
-                "ID: Clean Title\n"
-                "Nothing else."
+                "Return exactly one line per node:\n"
+                "ID: Clean Title"
             )
             result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
             if "error" in result:
@@ -1393,15 +1429,20 @@ class NovaConsciousness:
                     continue
                 nid = int(m.group(1))
                 title = m.group(2).strip(" .\"'*#-")
-                if nid in valid_ids and 2 <= len(title) <= 80:
+                if nid not in valid_ids:
+                    continue
+                if _is_clean(title):
                     updates.append((title, nid))
+                else:
+                    rejected += 1
             if updates:
                 await asyncio.to_thread(_apply, updates)
                 relabeled += len(updates)
                 logging.info(f"Weaver relabeled {len(updates)} nodes "
                              f"(batch {i // batch_size + 1})")
 
-        return {"relabeled": relabeled, "total": len(rows), "domain": domain}
+        return {"relabeled": relabeled, "rejected": rejected,
+                "total": len(rows), "domain": domain}
 
     def _track_entities(self, text: str):
         entities = self.mythos_index.get("entities", {})
@@ -3786,6 +3827,7 @@ class NovaConsciousness:
         elif cmd == "weaver_relabel":
             return await self._weaver_relabel(
                 d.get("domain", ""),
+                ids=d.get("ids"),
                 batch_size=int(d.get("batch_size", 8)),
                 max_nodes=int(d.get("max_nodes", 200)),
             )

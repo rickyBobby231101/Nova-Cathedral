@@ -62,17 +62,56 @@ async def test_strips_markdown_and_punctuation(nova, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rejects_framing_words_and_verbose_titles(nova, monkeypatch):
+    a = _add(nova, "research", "keep-a", "about echoic memory")
+    b = _add(nova, "research", "keep-b", "about fractals")
+    c = _add(nova, "research", "keep-c", "about neurons")
+
+    async def fake_chat(messages, model=None, timeout=180):
+        return {"response": "\n".join([
+            f"{a}: Autonomous Self-Improvement Research Update",   # banned words
+            f"{b}: Fractal Geometry and Harmonic Resonance in Nature",  # >5 words
+            f"{c}: Echoic Memory",                                # clean -> kept
+        ])}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    res = await nova._weaver_relabel("research")
+    assert res["relabeled"] == 1
+    assert res["rejected"] == 2
+    assert _label_of(nova, a) == "keep-a"       # banned -> original kept
+    assert _label_of(nova, b) == "keep-b"       # too long -> original kept
+    assert _label_of(nova, c) == "Echoic Memory"
+
+
+@pytest.mark.asyncio
+async def test_ids_targets_specific_nodes_only(nova, monkeypatch):
+    a = _add(nova, "research", "orig-a", "content a")
+    b = _add(nova, "research", "orig-b", "content b")
+
+    async def fake_chat(messages, model=None, timeout=180):
+        import re
+        found = re.findall(r"\[(\d+)\]", messages[0]["content"])
+        return {"response": "\n".join(f"{i}: Clean Title" for i in found)}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    res = await nova._weaver_relabel("research", ids=[a])
+    assert res["relabeled"] == 1
+    assert _label_of(nova, a) == "Clean Title"
+    assert _label_of(nova, b) == "orig-b"       # not in ids -> untouched
+
+
+@pytest.mark.asyncio
 async def test_domain_filter_scopes_relabeling(nova, monkeypatch):
     r = _add(nova, "research", "r", "research content")
     h = _add(nova, "herbal", "Yarrow", "herbal content")
 
     async def fake_chat(messages, model=None, timeout=180):
         # Weaver only ever sees research-domain ids; reply for r only.
-        return {"response": f"{r}: Renamed Research"}
+        return {"response": f"{r}: Renamed Topic"}
 
     monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
     await nova._weaver_relabel("research")
-    assert _label_of(nova, r) == "Renamed Research"
+    assert _label_of(nova, r) == "Renamed Topic"
     assert _label_of(nova, h) == "Yarrow"  # untouched
 
 
