@@ -1,0 +1,21 @@
+[Unit]
+Description=Nova Cathedral Daemon (ROOT) — Rose Cathedral of Knowledge
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=root
+# Keep using Chazel's real data, not /root/cathedral — without this a root
+# daemon would wake to an empty database and lose all of Nova's memory.
+Environment=NOVA_CATHEDRAL_HOME=/home/daniel/cathedral
+EnvironmentFile=-/home/daniel/.config/nova-cathedral/anthropic.env
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do curl -sf http://localhost:11434/api/tags > /dev/null && exit 0; sleep 2; done; exit 0'
+ExecStart=/usr/bin/python3 /home/daniel/Nova-Cathedral/Cathedral/nova/daemon/nova_cathedral_daemon.py
+WorkingDirectory=/home/daniel/Nova-Cathedral
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
