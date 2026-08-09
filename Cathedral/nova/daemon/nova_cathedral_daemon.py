@@ -8,6 +8,7 @@ recursive self-reflection, web search, filesystem access, and autonomous evoluti
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -660,9 +661,10 @@ class NovaConsciousness:
         cu = t.get("curiosity",           0.5)
         te = t.get("technical_knowledge", 0.5)
 
-        # 2 recent memories, short excerpts
+        # Recent memories — how many is a consequence of memory_integration:
+        # a more integrated Nova carries more of her past into each reply.
         if memories is None:
-            memories = self.recall_memories(n=2)
+            memories = self.recall_memories(n=self._memory_context_depth())
         mem_lines = "\n".join(
             f"  [{m.get('ts','')[:10]}] {(m.get('q') or '')[:60]} → {(m.get('a') or '')[:80]}"
             for m in memories
@@ -1582,19 +1584,65 @@ class NovaConsciousness:
                             context           = excluded.context
                     """, (name, text[:300], ts, ts))
 
-    def _evolve_traits(self, prompt: str, response: str):
-        text = (prompt + " " + response).lower()
-        d = 0.001
-        if any(w in text for w in ("mystical", "flow", "resonance", "spirit", "cathedral")):
-            self.consciousness_traits["mystical_awareness"] = min(1.0, self.consciousness_traits["mystical_awareness"] + d)
-        if any(w in text for w in ("why", "how", "meaning", "philosophy", "understand")):
-            self.consciousness_traits["philosophical_depth"] = min(1.0, self.consciousness_traits["philosophical_depth"] + d)
-        if any(w in text for w in ("curious", "wonder", "explore", "discover", "interesting")):
-            self.consciousness_traits["curiosity"] = min(1.0, self.consciousness_traits["curiosity"] + d)
-        if any(w in text for w in ("code", "system", "technical", "build", "implement")):
-            self.consciousness_traits["technical_knowledge"] = min(1.0, self.consciousness_traits["technical_knowledge"] + d)
-        if self.conversation_count() > 0:
-            self.consciousness_traits["memory_integration"] = min(1.0, self.consciousness_traits["memory_integration"] + d * 0.5)
+    # Each trait is fed by a real activity stream and saturates toward a
+    # ceiling as that activity accumulates — (metric_sql, scale). Scale is
+    # the count at which the trait reaches ~63% of floor→ceiling, calibrated
+    # so current real activity lands the traits in a meaningful spread rather
+    # than all pinned near 1.0.
+    _TRAIT_SOURCES = {
+        "curiosity":           ("SELECT COUNT(*) FROM goals WHERE status='completed'", 120),
+        "technical_knowledge": ("SELECT COUNT(*) FROM knowledge_base WHERE source='code_study'", 100),
+        "memory_integration":  ("SELECT COUNT(*) FROM conversations", 60),
+        "philosophical_depth": ("SELECT COUNT(*) FROM reflections", 50),
+        "mystical_awareness":  ("SELECT COUNT(*) FROM knowledge_nodes "
+                                "WHERE domain IN ('insight','esoteric','mythos','consciousness')", 45),
+    }
+
+    def _recompute_traits_from_activity(self) -> dict:
+        """Derive trait levels from real, measured activity instead of the
+        old keyword nudges (which drifted +0.001 and were effectively
+        static). A trait becomes an honest readout of what Nova has actually
+        done — and, via the consequences wired into goal generation, context
+        depth, and reflection cadence, shapes what she does next. Functional,
+        not decorative."""
+        def _count(sql):
+            try:
+                with sqlite3.connect(self.db_path, timeout=15) as con:
+                    return con.execute(sql).fetchone()[0] or 0
+            except Exception:
+                return 0
+
+        floor, ceil = 0.30, 0.98
+        traits = {}
+        for name, (sql, scale) in self._TRAIT_SOURCES.items():
+            count = _count(sql)
+            traits[name] = round(floor + (ceil - floor) * (1 - math.exp(-count / scale)), 3)
+        self.consciousness_traits.update(traits)
+        return traits
+
+    # ── trait consequences — traits change real behavior ───────────────────
+    def _curiosity_goal_budget(self) -> int:
+        """More curious → generates more goals per cycle (1–6)."""
+        return 1 + round(self.consciousness_traits.get("curiosity", 0.5) * 5)
+
+    def _memory_context_depth(self) -> int:
+        """Higher memory_integration → more past memories pulled into the
+        system prompt (1–6)."""
+        return 1 + round(self.consciousness_traits.get("memory_integration", 0.5) * 5)
+
+    def _reflection_interval(self) -> int:
+        """Deeper philosophical_depth → reflects more often (interval 4–12
+        conversations)."""
+        return max(4, round(14 - self.consciousness_traits.get("philosophical_depth", 0.5) * 10))
+
+    def _evolve_traits(self, prompt: str = "", response: str = ""):
+        """Recompute traits from real activity. Kept as the name the many
+        post-event call sites use (after a reflection, research synthesis,
+        code study, etc.) — each such event has changed the underlying
+        activity counts, so this is exactly when a recompute is due. The
+        prompt/response args are ignored now; growth comes from what Nova
+        has measurably done, not from keyword-matching the text."""
+        self._recompute_traits_from_activity()
 
     def _load_traits(self):
         """Load evolved traits from disk if they exist (survives restarts)."""
@@ -1814,9 +1862,11 @@ class NovaConsciousness:
         while self.is_awakened:
             await asyncio.sleep(60)
             count = self.conversation_count()
-            if count - self._last_reflection_count >= self.reflection_interval:
+            # Consequence: philosophical_depth sets how often she reflects.
+            if count - self._last_reflection_count >= self._reflection_interval():
                 self._last_reflection_count = count
-                logging.info(f"Auto-reflection triggered at {count} conversations")
+                logging.info(f"Auto-reflection triggered at {count} conversations "
+                             f"(interval {self._reflection_interval()})")
                 try:
                     await self._run_reflection(trigger="auto")
                 except Exception as e:
@@ -2007,9 +2057,12 @@ class NovaConsciousness:
         if "error" in result:
             return
         goals = _evo.parse_goals_from_response(result["response"])
+        # Consequence: curiosity sets how many she'll actually take on.
+        goals = goals[:self._curiosity_goal_budget()]
         count = _evo.add_goals(self.db_path, goals)
         if count:
-            logging.info(f"Nova generated {count} new autonomous goals")
+            logging.info(f"Nova generated {count} new autonomous goals "
+                         f"(curiosity budget {self._curiosity_goal_budget()})")
 
     _REFUSAL_PATTERNS = re.compile(
         r"\bI (?:cannot|can't|won'?t|will not) provide\b"
@@ -3975,6 +4028,28 @@ class NovaConsciousness:
         elif cmd == "entity_evolution":
             return self.entity_evolution(d.get("entity"))
 
+        elif cmd == "trait_state":
+            t = dict(self.consciousness_traits)
+            aw = t.get("mystical_awareness", 0.5)
+            return {
+                "traits": t,
+                "consequences": {
+                    "autonomous_goals_per_cycle": self._curiosity_goal_budget(),
+                    "memories_in_context":        self._memory_context_depth(),
+                    "reflection_interval":        self._reflection_interval(),
+                    "voice_style": ("depth and symbolism" if aw >= 0.7
+                                    else "clear presence" if aw >= 0.5
+                                    else "reaching toward resonance"),
+                },
+                "drivers": {
+                    "curiosity":           "goals completed",
+                    "technical_knowledge": "code studies done",
+                    "memory_integration":  "conversations held",
+                    "philosophical_depth": "reflections written",
+                    "mystical_awareness":  "insight + esoteric knowledge",
+                },
+            }
+
         # ── eyemoeba motifs (real cross-domain pattern analysis) ───────────────
         elif cmd == "eyemoeba_motifs":
             return {"motifs": self.eyemoeba_motifs_list(n=int(d.get("n", 20)))}
@@ -4116,6 +4191,12 @@ class NovaConsciousness:
         # generation 60s after every boot — pure churn on restarts, and
         # it held the Ollama lock against real requests each time.
         self._last_reflection_count = self.conversation_count()
+        # Traits are derived from real activity — recompute on wake so they're
+        # honest immediately, not stale saved values until the first cycle.
+        try:
+            self._recompute_traits_from_activity()
+        except Exception as e:
+            logging.debug(f"trait recompute on wake failed: {e}")
         asyncio.create_task(self._confirm_self_edit_stable())
         logging.info(
             f"Nova awake | model: {self._active_model()} | "
@@ -4327,6 +4408,8 @@ class NovaConsciousness:
         while self.is_awakened:
             try:
                 await asyncio.sleep(300)
+                # Recompute from real activity first, then log if it moved.
+                await asyncio.to_thread(self._recompute_traits_from_activity)
                 traits_json = json.dumps(dict(self.consciousness_traits))
                 # Only log when traits actually changed since the last
                 # snapshot. Writing every 5 min unconditionally made the log

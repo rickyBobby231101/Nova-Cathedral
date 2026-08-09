@@ -442,6 +442,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("entity_evolution", timeout=5.0)
             return result or {"entities": []}
 
+        # ── trait state + what the traits actually do (functional, not decor) ───
+        if path == "/api/traits/state":
+            result = _daemon_call("trait_state", timeout=5.0)
+            return result or {"error": "daemon unreachable"}
+
         # ── the crypt (compressed memory archive) ────────────────────────────────
         if path == "/api/crypt/status":
             result = _daemon_call("crypt_status", timeout=5.0)
