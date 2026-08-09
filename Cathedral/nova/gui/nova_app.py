@@ -575,6 +575,22 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("plugin_run", timeout=30.0, name=name, input=inp)
             return result or {"error": "daemon unreachable"}
 
+        # ── almanac: weather + lunar cycle (via the sandbox plugins) ────────────
+        if path == "/api/weather":
+            city = qs.get("city", ["Austin"])[0] or "Austin"
+            r = _daemon_call("plugin_run", timeout=30.0, name="weather", input={"city": city})
+            if r and r.get("ok"):
+                return r["result"]
+            return {"error": (r or {}).get("error", "weather unavailable")}
+
+        if path == "/api/moon":
+            date = qs.get("date", [""])[0]
+            inp = {"date": date} if date else {}
+            r = _daemon_call("plugin_run", timeout=15.0, name="moon_phase", input=inp)
+            if r and r.get("ok"):
+                return r["result"]
+            return {"error": (r or {}).get("error", "moon phase unavailable")}
+
         # ── voice (TTS) ───────────────────────────────────────────────────────
         if path == "/api/voice/status":
             result = _daemon_call("voice_status", timeout=5.0)

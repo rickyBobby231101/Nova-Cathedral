@@ -827,6 +827,9 @@
     <div class="nav-item" onclick="showView('voice',this)">
       <span class="icon">🔊</span> Voice
     </div>
+    <div class="nav-item" onclick="showView('almanac',this)">
+      <span class="icon">🌙</span> Almanac
+    </div>
 
     <div class="nav-section" style="margin-top:10px">System</div>
     <div class="nav-item" onclick="showView('plugins',this)">
@@ -1157,6 +1160,33 @@
         </div>
         <div id="stt-partial" style="margin-top:10px;font-size:12px;color:var(--text-dim);font-style:italic"></div>
         <div id="stt-finals" style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <!-- ALMANAC — weather + lunar cycle -->
+    <div id="view-almanac" class="section">
+      <div class="card">
+        <div class="card-title">🌙 Lunar Cycle</div>
+        <div id="moon-display" style="text-align:center;padding:10px">
+          <div style="font-size:64px;line-height:1" id="moon-emoji">🌑</div>
+          <div style="font-size:18px;color:var(--accent);margin-top:6px" id="moon-phase">—</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:2px" id="moon-illum">—</div>
+          <div style="margin:14px auto 4px;max-width:320px;height:6px;background:#0d2030;border-radius:3px;overflow:hidden">
+            <div id="moon-cycle-bar" style="height:100%;width:0%;background:var(--purple);transition:width 1s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;max-width:320px;margin:0 auto;font-size:10px;color:var(--text-dim)">
+            <span>🌑 new</span><span>🌕 full</span><span>🌑 new</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:10px" id="moon-next">—</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🌡️ Weather</div>
+        <div class="search-row">
+          <input type="text" id="weather-city" placeholder="City (e.g. Austin)" value="Austin" onkeydown="if(event.key==='Enter')loadWeather()">
+          <button onclick="loadWeather()">CHECK</button>
+        </div>
+        <div id="weather-display" style="margin-top:10px"><div class="empty-state">Enter a city and check.</div></div>
       </div>
     </div>
 
@@ -1583,6 +1613,7 @@ function showView(name, navEl) {
   if (name === 'bridge') refreshClaudeBridgeStatus();
   if (name === 'herbal') loadHerbal();
   if (name === 'voice') { refreshVoiceStatus(); refreshSttStatus(); }
+  if (name === 'almanac') loadAlmanac();
   if (name === 'plugins') refreshPlugins();
   if (name === 'chapel') loadEntityEvolution();
 }
@@ -1717,6 +1748,44 @@ async function askSelfReport() {
   } else {
     box.textContent = (r && r.error) ? ('[' + r.error + ']') : '[offline]';
   }
+}
+
+async function loadAlmanac() {
+  loadMoon();
+  loadWeather();
+}
+
+async function loadMoon() {
+  const d = await apiCall('/api/moon');
+  if (!d || d.error) { document.getElementById('moon-phase').textContent = 'unavailable'; return; }
+  document.getElementById('moon-emoji').textContent = d.emoji || '🌙';
+  document.getElementById('moon-phase').textContent = d.phase_name || '—';
+  document.getElementById('moon-illum').textContent = `${d.illumination_pct}% illuminated · day ${d.age_days} of 29.5 · ${d.waxing ? 'waxing' : 'waning'}`;
+  document.getElementById('moon-cycle-bar').style.width = (d.cycle_pct || 0) + '%';
+  document.getElementById('moon-next').textContent =
+    `Next full moon in ${d.days_to_full} days · next new moon in ${d.days_to_new} days`;
+}
+
+async function loadWeather() {
+  const city = (document.getElementById('weather-city').value || 'Austin').trim();
+  const box = document.getElementById('weather-display');
+  box.innerHTML = '<div class="empty-state">Reading the sky…</div>';
+  const d = await apiCall('/api/weather?city=' + encodeURIComponent(city));
+  if (!d || d.error) { box.innerHTML = `<div class="empty-state">${escHtml((d||{}).error || 'offline')}</div>`; return; }
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px">
+      <div style="font-size:52px;line-height:1">${d.emoji || '🌡️'}</div>
+      <div>
+        <div style="font-size:22px;color:var(--accent)">${escHtml(d.temp)} <span style="font-size:13px;color:var(--text-dim)">feels ${escHtml(d.feels_like)}</span></div>
+        <div style="font-size:14px">${escHtml(d.condition)}</div>
+        <div style="font-size:11px;color:var(--text-dim)">${escHtml(d.location)}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;font-size:11px;font-family:var(--mono)">
+      <div><span style="color:var(--text-dim)">HUMIDITY</span><br>${escHtml(d.humidity)}</div>
+      <div><span style="color:var(--text-dim)">WIND</span><br>${escHtml(d.wind)}</div>
+      <div><span style="color:var(--text-dim)">PRECIP</span><br>${escHtml(d.precip)}</div>
+    </div>`;
 }
 
 async function renderVitals() {

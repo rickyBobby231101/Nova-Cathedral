@@ -50,12 +50,22 @@ class NovaPlugin:
             key=lambda p: min(abs(frac - p[0]), 1 - abs(frac - p[0]))
         )[1:]
 
+        # Days until the next new and full moon, from where we are in the cycle.
+        days_to_new  = round((self._SYNODIC - age) % self._SYNODIC, 1)
+        half         = self._SYNODIC / 2
+        days_to_full = round((half - age) % self._SYNODIC, 1)
+        waxing = frac < 0.5
+
         return {
             "date":             dt.strftime("%Y-%m-%d"),
             "phase_name":       name,
             "emoji":            emoji,
             "illumination_pct": round(illum, 1),
             "age_days":         round(age, 1),
+            "cycle_pct":        round(frac * 100, 1),
+            "waxing":           waxing,
+            "days_to_full":     days_to_full,
+            "days_to_new":      days_to_new,
         }
 
 
