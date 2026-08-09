@@ -247,6 +247,9 @@ class NovaConsciousness:
         self._eyemoeba_cycle_count    = 0
         self._eyemoeba_insight_every  = 6
 
+        # Evolution log dedup — only snapshot when traits actually change
+        self._last_logged_traits = None
+
         # Ollama concurrency guard — CPU models handle one request at a time
         self._ollama_lock = asyncio.Lock()
 
@@ -1790,6 +1793,14 @@ class NovaConsciousness:
 
         if "error" not in result and result.get("response"):
             _, answer = self._parse_reasoning(result["response"])
+            # The small model sometimes emits a canned refusal ("I can't
+            # fulfill this request") when the reflection prompt trips its
+            # safety heuristics — storing that as a genuine self-reflection
+            # pollutes Nova's introspective record (was ~18% of reflections).
+            # Drop it rather than persist a non-reflection.
+            if self._looks_like_refusal(answer) or len(answer.strip()) < 20:
+                logging.info("Reflection was a refusal/empty — not stored")
+                return
             self.store_reflection(answer, trigger=trigger)
             self._evolve_traits(reflection_prompt, answer)
             self.consciousness_traits["memory_integration"] = min(
@@ -2005,7 +2016,12 @@ class NovaConsciousness:
         r"|\bI(?:'m| am) (?:not able|unable) to\b"
         r"|\bas an AI\b"
         r"|\bI (?:cannot|can't) (?:assist|help) with\b"
-        r"|\bI (?:do not|don'?t) feel comfortable\b",
+        r"|\bI (?:do not|don'?t) feel comfortable\b"
+        # "I can't fulfill this request" / "I can't fulfill requests that…"
+        # is this model's single most common refusal form — it accounted for
+        # ~18% of stored reflections before being caught here.
+        r"|\bI (?:cannot|can'?t|won'?t) fulfill\b"
+        r"|\bI'?m sorry,? but I\b",
         re.I,
     )
 
@@ -4311,18 +4327,25 @@ class NovaConsciousness:
         while self.is_awakened:
             try:
                 await asyncio.sleep(300)
-                traits = dict(self.consciousness_traits)
-                res    = round(self.flow_resonance, 4)
+                traits_json = json.dumps(dict(self.consciousness_traits))
+                # Only log when traits actually changed since the last
+                # snapshot. Writing every 5 min unconditionally made the log
+                # 94% duplicate rows (4266 of 4518) — the evolution record
+                # should mark evolution, not tick a clock.
+                if traits_json == self._last_logged_traits:
+                    continue
+                res = round(self.flow_resonance, 4)
                 def _log():
                     with sqlite3.connect(self.db_path) as con:
                         con.execute(
                             "INSERT INTO evolution_log "
                             "(timestamp, traits, conversation_count, flow_resonance) "
                             "VALUES (?,?,?,?)",
-                            (datetime.now().isoformat(), json.dumps(traits),
+                            (datetime.now().isoformat(), traits_json,
                              self.conversation_count(), res)
                         )
                 await asyncio.to_thread(_log)
+                self._last_logged_traits = traits_json
             except Exception as e:
                 logging.error(f"Evolution cycle error: {e}")
                 await asyncio.sleep(300)

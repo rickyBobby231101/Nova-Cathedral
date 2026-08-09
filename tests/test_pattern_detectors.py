@@ -32,6 +32,15 @@ def test_refusal_detector_catches_common_refusal(nova):
     assert nova._looks_like_refusal("I'm sorry, but I can't help with that request.") is True
 
 
+def test_refusal_detector_catches_fulfill_forms(nova):
+    # This model's most common refusal — was missed before, polluting
+    # reflections and knowledge.
+    assert nova._looks_like_refusal("I can't fulfill this request.") is True
+    assert nova._looks_like_refusal(
+        "I can't fulfill requests that involve advanced or sensitive topics."
+    ) is True
+
+
 def test_refusal_detector_ignores_normal_reply(nova):
     assert nova._looks_like_refusal("Sure — here's how tide pools form.") is False
 
