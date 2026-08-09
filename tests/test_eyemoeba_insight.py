@@ -128,3 +128,33 @@ def test_motif_evidence_groups_by_domain(nova):
     # each domain bucket holds sample nodes with labels + snippets
     sample = ev["by_domain"]["quantum"][0]
     assert "label" in sample and "snippet" in sample
+
+
+# ── Auto-insight scheduling helpers ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_motif_has_insight_tracks_stored_insights(nova, monkeypatch):
+    _seed_motif(nova)
+    assert nova._motif_has_insight("light") is False
+
+    async def fake_chat(messages, model=None, timeout=180):
+        return {"response": "Light threads energy, spirit, and life together."}
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    await nova.eyemoeba_insight("light")
+
+    assert nova._motif_has_insight("light") is True
+
+
+@pytest.mark.asyncio
+async def test_top_unexplained_motif_skips_already_explained(nova, monkeypatch):
+    _seed_motif(nova)
+    first = nova._top_unexplained_motif()
+    assert first is not None
+
+    async def fake_chat(messages, model=None, timeout=180):
+        return {"response": "A grounded connection."}
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    await nova.eyemoeba_insight(first)
+
+    # After explaining it, the top-unexplained pick must move on (or be None).
+    assert nova._top_unexplained_motif() != first

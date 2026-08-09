@@ -240,6 +240,13 @@ class NovaConsciousness:
         self._crypt_keep_active = 50       # most recent N conversations always stay uncrypted
         self._crypt_batch       = 20       # summarize this many at a time
 
+        # Eyemoeba auto-insight — every Nth pattern-detection cycle (300s each),
+        # synthesize one grounded insight for the strongest not-yet-explained
+        # motif. 6 cycles ≈ every 30 min: gentle on the shared Ollama lock,
+        # which the evolution + reflection loops also compete for.
+        self._eyemoeba_cycle_count    = 0
+        self._eyemoeba_insight_every  = 6
+
         # Ollama concurrency guard — CPU models handle one request at a time
         self._ollama_lock = asyncio.Lock()
 
@@ -1106,6 +1113,25 @@ class NovaConsciousness:
             if len(bucket) < per_domain:
                 bucket.append({"label": label, "snippet": (content or "")[:200]})
         return {"term": term.lower(), "domains": domains, "by_domain": by_domain}
+
+    def _motif_has_insight(self, term: str) -> bool:
+        """True if an insight node already exists for this motif (label
+        convention: 'Pattern: <term> across ...')."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute(
+                "SELECT 1 FROM knowledge_nodes "
+                "WHERE domain='insight' AND source='eyemoeba' AND label LIKE ? LIMIT 1",
+                (f"Pattern: {term.lower()} across%",)
+            ).fetchone()
+        return row is not None
+
+    def _top_unexplained_motif(self) -> str | None:
+        """The strongest cross-domain motif (most domains, then most nodes)
+        that has no insight node yet. None if all top motifs are explained."""
+        for m in self.eyemoeba_motifs_list(n=25):
+            if len(m["domains"]) >= 2 and not self._motif_has_insight(m["term"]):
+                return m["term"]
+        return None
 
     async def eyemoeba_insight(self, term: str, store: bool = True) -> dict:
         """Eyemoeba synthesizes WHY a cross-domain motif recurs — grounded in
@@ -4223,6 +4249,19 @@ class NovaConsciousness:
                         await asyncio.to_thread(
                             lambda p=trace_path, d=payload: p.write_text(json.dumps(d))
                         )
+
+                # Every Nth cycle, deepen one pattern into a grounded insight —
+                # pattern detection becoming generative on its own schedule.
+                self._eyemoeba_cycle_count += 1
+                if self._eyemoeba_cycle_count % self._eyemoeba_insight_every == 0:
+                    term = await asyncio.to_thread(self._top_unexplained_motif)
+                    if term:
+                        res = await self.eyemoeba_insight(term)
+                        if "error" not in res:
+                            logging.info(f"Eyemoeba auto-insight on '{term}' "
+                                         f"(node {res.get('node_id')})")
+                        else:
+                            logging.debug(f"Eyemoeba auto-insight skipped: {res['error']}")
                 await asyncio.sleep(300)
             except Exception as e:
                 logging.error(f"Eyemoeba error: {e}")
