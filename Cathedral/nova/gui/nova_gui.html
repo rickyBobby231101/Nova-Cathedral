@@ -1364,6 +1364,15 @@
             <button id="kg-add-btn" class="green" onclick="addKnowledge()">ADD TO CATHEDRAL</button>
           </div>
         </div>
+        <!-- Graph coherence -->
+        <div style="padding:10px;background:#080e18;border:1px solid #0d2030;border-radius:4px">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:2px;margin-bottom:6px">GRAPH COHERENCE</div>
+          <div id="graph-health-line" style="font-size:12px;color:var(--text-dim);margin-bottom:8px">—</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="refreshGraphHealth()">CHECK</button>
+            <button class="green" onclick="weaveOrphans()">CONNECT ORPHANS</button>
+          </div>
+        </div>
         <!-- Weaver cleanup -->
         <div style="padding:10px;background:#080e18;border:1px solid #0d2030;border-radius:4px">
           <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:2px;margin-bottom:6px">THE WEAVER — TITLE CLEANUP</div>
@@ -1556,7 +1565,7 @@ function showView(name, navEl) {
   if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
   if (name === 'memories') { loadMemories(); refreshCrypt(); }
-  if (name === 'rosewindow') loadKnowledgeGraph('');
+  if (name === 'rosewindow') { loadKnowledgeGraph(''); refreshGraphHealth(); }
   if (name === 'neuronode') loadNeuronodeStatus();
   if (name === 'bridge') refreshClaudeBridgeStatus();
   if (name === 'herbal') loadHerbal();
@@ -3012,6 +3021,29 @@ async function addKnowledge() {
     await loadKnowledgeGraph(kgDomainFilter);
   } else {
     logActivity('err', 'Knowledge add failed: ' + JSON.stringify(data));
+  }
+}
+
+async function refreshGraphHealth() {
+  const line = document.getElementById('graph-health-line');
+  const h = await apiCall('/api/graph/health');
+  if (!h || h.error) { line.textContent = 'offline'; return; }
+  const pct = Math.round((h.coherence || 0) * 100);
+  line.innerHTML = `${h.total_nodes} nodes · ${h.edges} edges · `
+    + `<strong style="color:${pct >= 90 ? 'var(--ok)' : pct >= 75 ? 'var(--accent)' : 'var(--purple)'}">${pct}% connected</strong>`
+    + (h.orphans ? ` · <span style="color:var(--purple)">${h.orphans} orphans</span>` : ' · no orphans');
+}
+
+async function weaveOrphans() {
+  const line = document.getElementById('graph-health-line');
+  line.textContent = 'Weaving orphan nodes into the web…';
+  const r = await apiCall('/api/graph/weave_orphans', 'POST');
+  if (r && typeof r.orphans_connected === 'number') {
+    line.textContent = `Connected ${r.orphans_connected} of ${r.orphans_found} orphans (${r.edges_woven} edges). `;
+    await refreshGraphHealth();
+    await loadKnowledgeGraph(kgDomainFilter);
+  } else {
+    line.textContent = 'Weave failed: ' + ((r||{}).error || 'offline');
   }
 }
 

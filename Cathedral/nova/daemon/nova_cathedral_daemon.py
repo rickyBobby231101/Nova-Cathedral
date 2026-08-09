@@ -1507,6 +1507,71 @@ class NovaConsciousness:
                 (from_id, to_id, strength, resonance, datetime.now().isoformat())
             )
 
+    # ── graph coherence — keep the web connected, not a scatter of islands ──
+    def graph_health(self) -> dict:
+        """Measure how connected the knowledge graph is. Orphan nodes (no
+        edges) are invisible to Eyemoeba's edge-based reasoning and float
+        loose in the Rose Window — coherence is the fraction that is linked."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            total = con.execute("SELECT COUNT(*) FROM knowledge_nodes").fetchone()[0]
+            edges = con.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
+            connected = con.execute(
+                "SELECT COUNT(DISTINCT id) FROM knowledge_nodes "
+                "WHERE id IN (SELECT from_id FROM knowledge_edges) "
+                "   OR id IN (SELECT to_id FROM knowledge_edges)"
+            ).fetchone()[0]
+        return {"total_nodes": total, "edges": edges, "connected": connected,
+                "orphans": total - connected,
+                "coherence": round(connected / total, 3) if total else 0.0}
+
+    def _node_terms(self, text: str) -> set:
+        return set(re.findall(r"[a-z]{4,}", (text or "").lower())) - self._EYEMOEBA_STOPWORDS
+
+    def weave_orphans(self, max_edges: int = 2, min_overlap: int = 3) -> dict:
+        """Connect orphan nodes to their most term-similar neighbours —
+        algorithmic (shared significant terms), no LLM, so it's fast and
+        deterministic. Heals the graph so newly-added or seeded-but-never-
+        connected knowledge joins the web instead of floating alone."""
+        def _run():
+            with sqlite3.connect(self.db_path, timeout=15) as con:
+                nodes = con.execute(
+                    "SELECT id, label, content FROM knowledge_nodes"
+                ).fetchall()
+                edged = set()
+                for (a,) in con.execute("SELECT from_id FROM knowledge_edges"):
+                    edged.add(a)
+                for (b,) in con.execute("SELECT to_id FROM knowledge_edges"):
+                    edged.add(b)
+
+            terms = {nid: self._node_terms(f"{lbl} {content}")
+                     for nid, lbl, content in nodes}
+            orphans = [nid for nid, *_ in nodes if nid not in edged]
+            now = datetime.now().isoformat()
+            woven = healed = 0
+            with sqlite3.connect(self.db_path, timeout=15) as con:
+                for o in orphans:
+                    ot = terms[o]
+                    if not ot:
+                        continue
+                    scored = sorted(
+                        ((len(ot & terms[nid]), nid) for nid, *_ in nodes
+                         if nid != o and len(ot & terms[nid]) >= min_overlap),
+                        reverse=True,
+                    )[:max_edges]
+                    if scored:
+                        healed += 1
+                    for overlap, target in scored:
+                        con.execute(
+                            "INSERT OR IGNORE INTO knowledge_edges "
+                            "(from_id, to_id, strength, resonance_score, created) "
+                            "VALUES (?,?,?,?,?)",
+                            (o, target, min(1.0, overlap / 10.0), 0.5, now)
+                        )
+                        woven += 1
+            return {"orphans_found": len(orphans), "orphans_connected": healed,
+                    "edges_woven": woven}
+        return _run()
+
     def _knowledge_graph_data(self, domain: str = "", limit: int = 2000) -> dict:
         """Return graph data: nodes + edges for visualization.
 
@@ -4151,6 +4216,19 @@ class NovaConsciousness:
 
         elif cmd == "memories":
             return {"memories": self.recall_memories(n=int(d.get("n", 10)))}
+
+        # ── graph coherence ─────────────────────────────────────────────────────
+        elif cmd == "graph_health":
+            return self.graph_health()
+
+        elif cmd == "weave_orphans":
+            result = await asyncio.to_thread(
+                self.weave_orphans,
+                int(d.get("max_edges", 2)),
+                int(d.get("min_overlap", 3)),
+            )
+            result["health"] = self.graph_health()
+            return result
 
         # ── weaver relabel (clean up node titles) ──────────────────────────────
         elif cmd == "weaver_relabel":

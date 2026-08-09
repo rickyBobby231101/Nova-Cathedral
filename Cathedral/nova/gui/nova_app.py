@@ -438,6 +438,15 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("weaver_relabel", timeout=600.0, domain=domain)
             return result or {"error": "daemon unreachable"}
 
+        # ── graph coherence: health + orphan healing ────────────────────────────
+        if path == "/api/graph/health":
+            result = _daemon_call("graph_health", timeout=5.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/graph/weave_orphans" and method == "POST":
+            result = _daemon_call("weave_orphans", timeout=60.0)
+            return result or {"error": "daemon unreachable"}
+
         # ── entity evolution (all entities as growing agents) ───────────────────
         if path == "/api/entity/evolution":
             result = _daemon_call("entity_evolution", timeout=5.0)
