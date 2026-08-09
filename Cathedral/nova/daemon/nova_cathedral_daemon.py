@@ -947,17 +947,25 @@ class NovaConsciousness:
         if entities is None:
             entities = ["tillagon", "eyemoeba", "phoenix"]
         responses = {}
+        heard = {}   # only entities that genuinely answered (no error/non-answer)
         for e in entities:
             r = await self._entity_ask(e, question)
-            responses[e] = r.get("response", r.get("error", ""))
+            if "error" in r:
+                # A timeout or non-answer — keep it visible in the transcript,
+                # but it is NOT a voice to synthesize over. (Must key off the
+                # result dict, not string-match the value: an error string
+                # like "Ollama response exceeded 120s" is not a model refusal
+                # and would slip past _is_nonanswer — the bug that fed the
+                # synthesis its own failure messages.)
+                responses[e] = r["error"]
+            else:
+                responses[e] = r["response"]
+                heard[e] = r["response"]
 
         result = {"responses": responses, "question": question}
         if not synthesize:
             return result
 
-        # Only synthesize from voices that actually answered (not error stubs).
-        heard = {e: v for e, v in responses.items()
-                 if v and not self._is_nonanswer(v)}
         if len(heard) < 2:
             result["synthesis"] = None
             return result
@@ -981,7 +989,19 @@ class NovaConsciousness:
         if "error" not in synth:
             _, answer = self._parse_reasoning(synth["response"])
             answer = (answer or synth["response"]).strip()
-            result["synthesis"] = None if self._is_nonanswer(answer) else answer
+            judgment = None if self._is_nonanswer(answer) else answer
+            result["synthesis"] = judgment
+            # Persist the judgment — a council decision is Nova concluding
+            # after real deliberation; store it so decisions the Council
+            # reached become part of her record (trigger='council' keeps it
+            # distinct from auto-reflections in the same view).
+            if judgment:
+                await asyncio.to_thread(
+                    self.store_reflection,
+                    f"[Council on: {question[:120]}]\n"
+                    f"Consulted: {', '.join(heard)}\n{judgment}",
+                    "council",
+                )
         else:
             result["synthesis"] = None
         return result

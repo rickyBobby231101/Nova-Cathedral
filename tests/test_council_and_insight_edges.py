@@ -107,3 +107,59 @@ def test_motif_evidence_exposes_node_ids(nova):
     assert ev["node_ids"]
     assert ev["sample_ids"]
     assert set(ev["sample_ids"]) <= set(ev["node_ids"])
+
+
+@pytest.mark.asyncio
+async def test_council_judgment_is_persisted_as_reflection(nova, monkeypatch):
+    async def fake_chat(messages, model=None, timeout=180):
+        if "Council of the Accord" in messages[0]["content"]:
+            return {"response": "They agree; I conclude the Cathedral should consolidate."}
+        return {"response": "a genuine entity answer about growth and the flow"}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    nova.mega_brain = None
+    await nova._council_ask("Grow or consolidate?", entities=["tillagon", "phoenix"])
+
+    refs = nova.get_reflections(n=5)
+    council = [r for r in refs if r["trigger"] == "council"]
+    assert len(council) == 1
+    assert "Council on:" in council[0]["content"]
+    assert "consolidate" in council[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_no_judgment_no_reflection(nova, monkeypatch):
+    # Entities answer but synthesis is a non-answer -> nothing persisted.
+    async def fake_chat(messages, model=None, timeout=180):
+        if "Council of the Accord" in messages[0]["content"]:
+            return {"response": "I can't fulfill this request."}   # non-answer
+        return {"response": "a genuine entity answer about the resonant flow"}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    nova.mega_brain = None
+    await nova._council_ask("?", entities=["tillagon", "phoenix"])
+    assert [r for r in nova.get_reflections(n=5) if r["trigger"] == "council"] == []
+
+
+@pytest.mark.asyncio
+async def test_errored_entity_not_synthesized(nova, monkeypatch):
+    """An entity call that errors (timeout / non-answer) must not be fed to
+    the synthesis as if it were a real voice — the bug that made Nova 'weigh'
+    her own error strings. Only 1 genuine voice -> no synthesis."""
+    async def one_real_one_error(messages, model=None, timeout=180):
+        sysmsg = messages[0]["content"]
+        # Tillagon's persona -> a state-echo non-answer (entity_ask returns error)
+        if "Tillagon" in sysmsg or "Dragon Guardian" in sysmsg:
+            return {"response": "Cathedral state: Flow 8 Hz | Harmony 0.5 | Memories 5"}
+        if "Council of the Accord" in sysmsg:
+            raise AssertionError("synthesis should not run with <2 real voices")
+        return {"response": "Phoenix speaks a genuine reflection on continuity here."}
+
+    monkeypatch.setattr(nova, "_ollama_chat", one_real_one_error)
+    nova.mega_brain = None
+    res = await nova._council_ask("Grow?", entities=["tillagon", "phoenix"])
+
+    # Tillagon's error is shown in the transcript but was not synthesized.
+    assert "error" in res["responses"]["tillagon"].lower() or "non-answer" in res["responses"]["tillagon"].lower()
+    assert res["synthesis"] is None
+    assert [r for r in nova.get_reflections(n=5) if r["trigger"] == "council"] == []
