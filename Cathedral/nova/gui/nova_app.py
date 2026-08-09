@@ -414,6 +414,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("eyemoeba_motifs", timeout=5.0, n=20)
             return result or {"motifs": []}
 
+        # ── eyemoeba insights (synthesized cross-domain connections) ────────────
+        if path == "/api/eyemoeba/insights":
+            result = _daemon_call("eyemoeba_insights", timeout=5.0, n=20)
+            return result or {"insights": []}
+
         # ── entity evolution (all entities as growing agents) ───────────────────
         if path == "/api/entity/evolution":
             result = _daemon_call("entity_evolution", timeout=5.0)

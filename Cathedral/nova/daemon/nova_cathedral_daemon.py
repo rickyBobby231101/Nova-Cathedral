@@ -1114,6 +1114,20 @@ class NovaConsciousness:
                 bucket.append({"label": label, "snippet": (content or "")[:200]})
         return {"term": term.lower(), "domains": domains, "by_domain": by_domain}
 
+    def eyemoeba_insights_list(self, n: int = 20) -> list[dict]:
+        """The grounded insights Eyemoeba has synthesized (stored 'insight'
+        nodes), newest first."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT id, label, content, created FROM knowledge_nodes "
+                "WHERE domain='insight' AND source='eyemoeba' "
+                "ORDER BY created DESC LIMIT ?", (n,)
+            ).fetchall()
+        return [
+            {"id": r[0], "label": r[1], "insight": r[2], "created": r[3][:19]}
+            for r in rows
+        ]
+
     def _motif_has_insight(self, term: str) -> bool:
         """True if an insight node already exists for this motif (label
         convention: 'Pattern: <term> across ...')."""
@@ -3962,6 +3976,9 @@ class NovaConsciousness:
             if not term:
                 return {"error": "missing 'term'"}
             return await self.eyemoeba_insight(term, store=d.get("store", True))
+
+        elif cmd == "eyemoeba_insights":
+            return {"insights": self.eyemoeba_insights_list(n=int(d.get("n", 20)))}
 
         # ── the crypt (compressed memory archive) ───────────────────────────────
         elif cmd == "crypt_status":

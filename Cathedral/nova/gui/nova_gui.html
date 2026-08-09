@@ -1027,6 +1027,8 @@
         <div id="eyemoeba-motifs-panel" style="display:none;margin-top:12px">
           <div class="e-label">DETECTED PATTERNS — real cross-domain analysis of the knowledge web</div>
           <div id="eyemoeba-motifs-list" style="font-size:12px;line-height:1.7"></div>
+          <div class="e-label" style="margin-top:14px">SYNTHESIZED INSIGHTS — what the patterns mean (auto-generated over time)</div>
+          <div id="eyemoeba-insights-list" style="font-size:12px;line-height:1.6"></div>
         </div>
       </div>
 
@@ -1806,9 +1808,24 @@ function selectEntity(key, cardEl) {
   if (key === 'eyemoeba') {
     panel.style.display = 'block';
     loadEyemoebaMotifs();
+    loadEyemoebaInsights();
   } else {
     panel.style.display = 'none';
   }
+}
+
+async function loadEyemoebaInsights() {
+  const list = document.getElementById('eyemoeba-insights-list');
+  const data = await apiCall('/api/eyemoeba/insights');
+  if (!data || !data.insights || data.insights.length === 0) {
+    list.innerHTML = '<span style="color:var(--text-dim)">No insights synthesized yet — Eyemoeba deepens one top pattern every ~30 min.</span>';
+    return;
+  }
+  list.innerHTML = data.insights.map(i =>
+    `<div style="margin:8px 0;padding:8px;border-left:2px solid var(--purple)">` +
+    `<div style="color:var(--purple);font-size:11px;margin-bottom:3px">◎ ${escHtml(i.label)}</div>` +
+    `<div>${escHtml(i.insight)}</div></div>`
+  ).join('');
 }
 
 async function loadEntityEvolution() {

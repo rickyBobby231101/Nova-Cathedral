@@ -158,3 +158,19 @@ async def test_top_unexplained_motif_skips_already_explained(nova, monkeypatch):
 
     # After explaining it, the top-unexplained pick must move on (or be None).
     assert nova._top_unexplained_motif() != first
+
+
+@pytest.mark.asyncio
+async def test_insights_list_returns_stored_newest_first(nova, monkeypatch):
+    _seed_motif(nova)
+    assert nova.eyemoeba_insights_list() == []
+
+    async def fake_chat(messages, model=None, timeout=180):
+        return {"response": "A grounded connection across domains."}
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    await nova.eyemoeba_insight("light")
+
+    listed = nova.eyemoeba_insights_list()
+    assert len(listed) == 1
+    assert listed[0]["label"].startswith("Pattern: light")
+    assert "grounded connection" in listed[0]["insight"]
