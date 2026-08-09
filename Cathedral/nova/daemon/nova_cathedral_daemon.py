@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import yaml
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import psutil
@@ -862,6 +862,31 @@ class NovaConsciousness:
                     f"{z['sessions']} distinct sessions; the busiest hour is {z['busiest_hour']}:00. "
                     f"Last exchange was {z['gap_hours']}h ago."
                 )
+        elif key == "weaver":
+            try:
+                w = self.weaver_state()
+            except Exception:
+                w = None
+            if w and w["total_nodes"]:
+                state += (
+                    "\n\nThe real shape of the web you maintain (speak from this, "
+                    f"don't invent): {w['total_nodes']} nodes across {w['domains']} "
+                    f"domains, joined by {w['edges']} threads — {int(w['coherence']*100)}% "
+                    f"connected, {w['orphans']} still loose. {w['edges_last_day']} new "
+                    "threads woven in the last day."
+                )
+        elif key == "jorlaan":
+            try:
+                s = self.jorlaan_serendipity()
+            except Exception:
+                s = None
+            if s:
+                state += (
+                    "\n\nA genuinely surprising thread you just noticed in the web "
+                    f"(real, from the graph — riff on it if it fits): '{s['a_label']}' "
+                    f"({s['a_domain']}) is connected to '{s['b_label']}' ({s['b_domain']}). "
+                    "Who would have thought."
+                )
         # Every entity carries its own evolution stage — it grows with use.
         try:
             evo = self._entity_activity(key)
@@ -1581,6 +1606,43 @@ class NovaConsciousness:
         if self._is_nonanswer(narration):
             return {"error": "self-report was a non-answer", "vitals": v}
         return {"report": narration, "vitals": v}
+
+    # ── Weaver — speaks from the real shape of the graph it maintains ───────
+    def weaver_state(self) -> dict:
+        """Real graph state for the Weaver: size, connectivity, domain spread,
+        and how many edges were woven recently. The architect should describe
+        the actual structure, not imagine it."""
+        gh = self.graph_health()
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            domains = con.execute(
+                "SELECT COUNT(DISTINCT domain) FROM knowledge_nodes"
+            ).fetchone()[0]
+            recent_edges = con.execute(
+                "SELECT COUNT(*) FROM knowledge_edges WHERE created >= ?",
+                ((datetime.now() - timedelta(days=1)).isoformat(),)
+            ).fetchone()[0]
+        gh.update({"domains": domains, "edges_last_day": recent_edges})
+        return gh
+
+    # ── Jorlaan — real serendipity: surprising cross-domain connections ─────
+    def jorlaan_serendipity(self) -> dict:
+        """Surface a genuinely surprising connection: an edge linking two
+        nodes from DIFFERENT domains. Random pick each call, so the trickster
+        finds fresh unexpected juxtapositions rather than the same one —
+        whimsy grounded in the real graph, not invented."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute(
+                "SELECT a.domain, a.label, b.domain, b.label "
+                "FROM knowledge_edges e "
+                "JOIN knowledge_nodes a ON a.id = e.from_id "
+                "JOIN knowledge_nodes b ON b.id = e.to_id "
+                "WHERE a.domain != b.domain "
+                "ORDER BY RANDOM() LIMIT 1"
+            ).fetchone()
+        if not row:
+            return {}
+        return {"a_domain": row[0], "a_label": row[1],
+                "b_domain": row[2], "b_label": row[3]}
 
     # ── graph coherence — keep the web connected, not a scatter of islands ──
     def graph_health(self) -> dict:
@@ -4322,6 +4384,13 @@ class NovaConsciousness:
             )
 
         # ── entity backing data (real, per-entity) ─────────────────────────────
+        elif cmd == "weaver_state":
+            return self.weaver_state()
+
+        elif cmd == "jorlaan_serendipity":
+            s = self.jorlaan_serendipity()
+            return s or {"error": "no cross-domain connections yet"}
+
         elif cmd == "phoenix_history":
             return self.phoenix_history(n=int(d.get("n", 40)))
 
