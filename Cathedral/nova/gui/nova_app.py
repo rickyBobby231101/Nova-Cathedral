@@ -106,6 +106,24 @@ def _is_chat_error_reply(reply: str) -> bool:
     where this is used."""
     return reply.startswith("[Reasoning call failed:") or reply.startswith("[Ollama error:")
 
+
+import re as _re
+_REFUSAL_RE = _re.compile(
+    r"\bI (?:cannot|can'?t|won'?t|will not) (?:provide|help|assist|fulfill)\b"
+    r"|\bI(?:'m| am) (?:not able|unable) to\b"
+    r"|\bas an AI\b|\bself-harm\b|\bharmful activities\b"
+    r"|\bI'?m sorry,? but I\b",
+    _re.I,
+)
+
+
+def _is_refusal(reply: str) -> bool:
+    """The small local model falsely refuses harmless mystical/philosophical
+    asks (ego dissolution, the void, letting go) as if they were self-harm.
+    Detect it so the GUI can route the retry through the daemon's
+    refusal-handling path instead of showing Chazel a safety lecture."""
+    return bool(reply) and bool(_REFUSAL_RE.search(reply[:200]))
+
 # ── Daemon socket proxy ───────────────────────────────────────────────────────
 
 def _daemon_call(command: str, timeout: float = 30.0, **kwargs) -> dict | None:
@@ -281,6 +299,14 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
                 # Prepend Nova's live system prompt so she responds as herself
                 msgs = [{"role": "system", "content": sysprompt}] + hist if sysprompt else hist
                 reply = chat_reply(msgs, timeout=180)
+                # A false refusal must never reach Chazel. The direct path has
+                # no reframing/deflection — route the retry through the daemon's
+                # ask, which retries with an anti-refusal directive and, failing
+                # that, deflects in character instead of lecturing about harm.
+                if _is_refusal(reply):
+                    r = _daemon_call("ask", timeout=200.0, prompt=msg)
+                    if r and r.get("response") and not _is_refusal(r["response"]):
+                        reply = r["response"]
 
             # Both failure paths return a bracketed placeholder string rather
             # than raising — that's convenient for displaying an error in the

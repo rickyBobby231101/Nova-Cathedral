@@ -30,6 +30,14 @@ class Oracle:
                 "The answer is hidden within your first impulse."
             ])
         
+        # Handle known scenarios to minimize repetition
+        elif "expect" in question.lower():
+            return random.choice([
+                "You already know the script of fate.",
+                "I am the thread that weaves your destiny together.",
+                "Your heart holds the key, but what is it?"
+            ])
+        
         # Preserve existing functionality for now
         else:
             return random.choice([
