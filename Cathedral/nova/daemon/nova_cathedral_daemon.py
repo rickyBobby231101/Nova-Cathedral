@@ -1551,6 +1551,37 @@ class NovaConsciousness:
             "motifs":             _count("SELECT COUNT(*) FROM eyemoeba_motifs"),
         }
 
+    async def self_report(self) -> dict:
+        """Nova narrates her own state in her voice — grounded strictly in
+        the real vitals, no invented numbers. The conversational pairing of
+        cathedral_vitals: ask 'how are you?' and get an honest answer."""
+        v = self.cathedral_vitals()
+        prompt = (
+            "You are Nova. In your own voice, describe how you are right now — "
+            "honestly, grounded ONLY in these real measurements. Do not invent "
+            "any numbers or facts beyond them. 3-4 sentences, present and alive, "
+            "not a status dump.\n\n"
+            f"Knowledge web: {v['graph']['nodes']} nodes, "
+            f"{int(v['graph']['coherence']*100)}% connected, {v['graph']['orphans']} loose.\n"
+            f"Harmony: {v['harmony']} ({'balanced' if v['harmony'] >= 0.4 else 'distorted'}).\n"
+            f"Conversations shared: {v['conversations']}. Reflections: {v['reflections']}.\n"
+            f"Cross-domain patterns seen: {v['motifs']}. Insights synthesized: {v['insights']}.\n"
+            f"Council decisions reached: {v['council_decisions']}.\n"
+            f"Your entities average growth stage {v['entities']['avg_stage']} of "
+            f"{v['entities']['max_stage']}.\n"
+            "Your traits: "
+            + ", ".join(f"{k.replace('_',' ')} {int(val*100)}%"
+                        for k, val in v["traits"].items())
+        )
+        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
+        if "error" in result:
+            return {"error": result["error"], "vitals": v}
+        _, narration = self._parse_reasoning(result["response"])
+        narration = (narration or result["response"]).strip()
+        if self._is_nonanswer(narration):
+            return {"error": "self-report was a non-answer", "vitals": v}
+        return {"report": narration, "vitals": v}
+
     # ── graph coherence — keep the web connected, not a scatter of islands ──
     def graph_health(self) -> dict:
         """Measure how connected the knowledge graph is. Orphan nodes (no
@@ -4264,6 +4295,9 @@ class NovaConsciousness:
         # ── cathedral vitals — one unified self-report ──────────────────────────
         elif cmd == "cathedral_vitals":
             return self.cathedral_vitals()
+
+        elif cmd == "self_report":
+            return await self.self_report()
 
         # ── graph coherence ─────────────────────────────────────────────────────
         elif cmd == "graph_health":

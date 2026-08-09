@@ -909,6 +909,10 @@
         <div id="vitals-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;font-family:var(--mono)">
           <div class="empty-state" style="grid-column:1/-1">Loading vitals…</div>
         </div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="purple" onclick="askSelfReport()">HOW ARE YOU, NOVA?</button>
+        </div>
+        <div id="self-report" style="display:none;margin-top:8px;padding:10px;border-left:2px solid var(--purple);font-size:13px;line-height:1.7;color:var(--text)"></div>
       </div>
 
       <div class="card">
@@ -1701,6 +1705,18 @@ async function pollApi() {
   if (harmony) renderHarmony(harmony);
   // Refresh vitals
   renderVitals();
+}
+
+async function askSelfReport() {
+  const box = document.getElementById('self-report');
+  box.style.display = 'block';
+  box.textContent = 'Nova is reflecting on her own state…';
+  const r = await apiCall('/api/self_report', 'POST');
+  if (r && r.report) {
+    box.textContent = '“' + r.report + '”';
+  } else {
+    box.textContent = (r && r.error) ? ('[' + r.error + ']') : '[offline]';
+  }
 }
 
 async function renderVitals() {

@@ -94,3 +94,32 @@ def test_cathedral_vitals_aggregates_system(nova):
     assert "coherence" in v["graph"]
     assert v["entities"]["count"] == len(nova._ENTITY_PERSONAS)
     assert "harmony" in v and "traits" in v
+
+
+import pytest
+
+@pytest.mark.asyncio
+async def test_self_report_grounded_and_returns_vitals(nova, monkeypatch):
+    _add(nova, "insight", "Pattern: x", "a synthesized connection")
+    captured = {}
+
+    async def fake_chat(messages, model=None, timeout=180):
+        captured["prompt"] = messages[0]["content"]
+        return {"response": "I feel connected and clear, my web whole, still young in council."}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    r = await nova.self_report()
+    assert "report" in r and "vitals" in r
+    assert "connected" in r["report"]
+    # the prompt must be grounded in real vitals, not blank
+    assert "Knowledge web:" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_self_report_rejects_nonanswer(nova, monkeypatch):
+    async def refuse(messages, model=None, timeout=180):
+        return {"response": "I can't fulfill this request."}
+    monkeypatch.setattr(nova, "_ollama_chat", refuse)
+    r = await nova.self_report()
+    assert "error" in r
+    assert "vitals" in r   # still returns the raw data

@@ -443,6 +443,10 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("cathedral_vitals", timeout=8.0)
             return result or {"error": "daemon unreachable"}
 
+        if path == "/api/self_report" and method == "POST":
+            result = _daemon_call("self_report", timeout=120.0)
+            return result or {"error": "daemon unreachable"}
+
         # ── graph coherence: health + orphan healing ────────────────────────────
         if path == "/api/graph/health":
             result = _daemon_call("graph_health", timeout=5.0)
