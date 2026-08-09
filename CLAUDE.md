@@ -103,7 +103,8 @@ Nova-Cathedral/
 `eyemoeba_motifs`, `eyemoeba_scan`, `eyemoeba_insight`, `eyemoeba_insights`,
 `phoenix_history`, `zorya_cycles`, `entity_evolution`,
 `agent_ask`, `council_ask`, `entity_list`, `entity_memories`,
-`weaver_relabel`
+`weaver_relabel`, `trait_state`, `graph_health`, `weave_orphans`,
+`cathedral_vitals`, `self_report`
 
 ### Plugin pattern
 
