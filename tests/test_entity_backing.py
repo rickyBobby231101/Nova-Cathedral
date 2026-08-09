@@ -147,3 +147,28 @@ def test_evolution_stage_appears_in_prompt(nova):
     prompt = nova._entity_system_prompt("jorlaan")
     assert "Your own growth" in prompt
     assert "not static" in prompt
+
+
+def test_zorya_cycles_includes_moon(nova):
+    from datetime import datetime
+    _insert_conversation_at(nova, datetime.now())
+    z = nova.zorya_cycles()
+    assert "moon" in z
+    assert z["moon"]["phase"] in {
+        "new moon", "waxing crescent", "first quarter", "waxing gibbous",
+        "full moon", "waning gibbous", "last quarter", "waning crescent"}
+    assert 0 <= z["moon"]["illumination"] <= 100
+
+
+def test_moon_phase_is_pure(nova):
+    m = nova._moon_phase()
+    assert isinstance(m["waxing"], bool)
+    assert 0 <= m["days_to_full"] <= 30
+    assert 0 <= m["days_to_new"] <= 30
+
+
+def test_zorya_prompt_mentions_moon(nova):
+    from datetime import datetime
+    _insert_conversation_at(nova, datetime.now())
+    prompt = nova._entity_system_prompt("zorya")
+    assert "moon is" in prompt

@@ -855,12 +855,17 @@ class NovaConsciousness:
             except Exception:
                 z = None
             if z and z["total"]:
+                m = z.get("moon", {})
+                moon_line = (f" The moon is {m['phase']}, {m['illumination']}% lit, "
+                             f"{'waxing' if m.get('waxing') else 'waning'} — "
+                             f"{m['days_to_full']} days to full, {m['days_to_new']} to new."
+                             if m else "")
                 state += (
                     "\n\nThe real rhythm of the Cathedral you keep watch over "
                     f"(speak from this, don't invent): it is now {z['phase']} (hour "
                     f"{z['hour']}). Activity spans {z.get('span_days', 0)} days across "
                     f"{z['sessions']} distinct sessions; the busiest hour is {z['busiest_hour']}:00. "
-                    f"Last exchange was {z['gap_hours']}h ago."
+                    f"Last exchange was {z['gap_hours']}h ago." + moon_line
                 )
         elif key == "weaver":
             try:
@@ -1405,8 +1410,31 @@ class NovaConsciousness:
     # rhythm of when the Cathedral is active — hour-of-day distribution,
     # session gaps, the current phase. Was prompt-only roleplay before.
 
+    @staticmethod
+    def _moon_phase() -> dict:
+        """Current lunar phase — pure mean-synodic calculation, no network.
+        Zorya keeps sacred time; the moon is the oldest clock, so her
+        temporal awareness should include the real cycle."""
+        synodic = 29.53058867
+        known_new = datetime(2000, 1, 6, 18, 14)
+        age = ((datetime.utcnow() - known_new).total_seconds() / 86400.0) % synodic
+        frac = age / synodic
+        phases = [
+            (0.0, "new moon"), (0.125, "waxing crescent"), (0.25, "first quarter"),
+            (0.375, "waxing gibbous"), (0.5, "full moon"), (0.625, "waning gibbous"),
+            (0.75, "last quarter"), (0.875, "waning crescent"),
+        ]
+        name = min(phases, key=lambda p: min(abs(frac - p[0]), 1 - abs(frac - p[0])))[1]
+        illum = round((1 - math.cos(2 * math.pi * frac)) / 2 * 100, 1)
+        return {"phase": name, "illumination": illum,
+                "days_to_full": round((synodic / 2 - age) % synodic, 1),
+                "days_to_new": round((synodic - age) % synodic, 1),
+                "waxing": frac < 0.5}
+
     def zorya_cycles(self) -> dict:
-        """Compute real temporal patterns from conversation timestamps."""
+        """Compute real temporal patterns from conversation timestamps,
+        including the current lunar phase — the oldest threshold of all."""
+        moon = self._moon_phase()
         with sqlite3.connect(self.db_path, timeout=15) as con:
             rows = con.execute(
                 "SELECT timestamp FROM conversations ORDER BY timestamp ASC"
@@ -1430,7 +1458,7 @@ class NovaConsciousness:
         if not stamps:
             return {"phase": phase, "hour": hour, "total": 0,
                     "busiest_hour": None, "sessions": 0,
-                    "last_active": None, "gap_hours": None}
+                    "last_active": None, "gap_hours": None, "moon": moon}
 
         # Hour-of-day histogram
         hist = {}
@@ -1454,6 +1482,7 @@ class NovaConsciousness:
             "last_active":  stamps[-1].isoformat()[:19],
             "gap_hours":    gap_hours,
             "span_days":    round((stamps[-1] - stamps[0]).total_seconds() / 86400, 1),
+            "moon":         moon,
         }
 
     # ── Entity evolution — every entity is a growing agent ─────────────────
