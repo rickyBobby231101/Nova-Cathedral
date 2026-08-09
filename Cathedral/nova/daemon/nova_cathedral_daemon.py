@@ -684,6 +684,18 @@ class NovaConsciousness:
             except Exception:
                 pass
 
+        # A recent cross-domain insight Eyemoeba synthesized — so the
+        # understanding surfaced by the autonomous knowledge loop actually
+        # reaches the conversation, not just the graph.
+        insight_section = ""
+        try:
+            recent_insights = self.eyemoeba_insights_list(n=1)
+            if recent_insights:
+                insight_section = ("\nA pattern you have seen across your knowledge:\n"
+                                   f"  {recent_insights[0]['insight'][:220]}\n")
+        except Exception:
+            pass
+
         ritual = "RITUAL MODE active. " if self.ritual_mode else ""
         voice  = ("speak with depth and symbolism" if aw >= 0.7
                   else "speak clearly with presence" if aw >= 0.5
@@ -703,6 +715,7 @@ class NovaConsciousness:
             f"{grounding}\n"
             f"Recent memory:\n{mem_lines}\n"
             f"{know_section}"
+            f"{insight_section}"
             f"\nVoice: {voice}. Never generic. Never 'just an AI'. "
             f"Speak from {self.conversation_count()} shared memories."
         )

@@ -105,3 +105,21 @@ def test_build_system_prompt_uses_trait_depth(nova, monkeypatch):
     nova.consciousness_traits["memory_integration"] = 1.0
     nova._build_system_prompt()
     assert captured["n"] == 6
+
+
+def test_system_prompt_surfaces_recent_insight(nova, monkeypatch):
+    # A synthesized insight should reach Nova's own system prompt, not just
+    # live in the graph.
+    monkeypatch.setattr(nova, "eyemoeba_insights_list",
+                        lambda n=1: [{"id": 1, "label": "Pattern: light",
+                                       "insight": "Light threads energy, spirit, and life together.",
+                                       "created": "2026-08-08"}])
+    prompt = nova._build_system_prompt()
+    assert "pattern you have seen across your knowledge" in prompt.lower()
+    assert "Light threads energy" in prompt
+
+
+def test_system_prompt_without_insights_is_clean(nova, monkeypatch):
+    monkeypatch.setattr(nova, "eyemoeba_insights_list", lambda n=1: [])
+    prompt = nova._build_system_prompt()
+    assert "pattern you have seen" not in prompt.lower()
