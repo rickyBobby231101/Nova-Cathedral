@@ -862,19 +862,55 @@ class NovaConsciousness:
         ctx = f"\n\nContext:\n{context[:1200]}" if context else ""
         return base + state + grounding + ctx
 
+    def _entity_context_depth(self, entity_key: str) -> int:
+        """How many of the entity's OWN past interactions to carry into its
+        next answer — a consequence of its evolution stage. A well-engaged
+        (high-stage) entity remembers more of what it has said; a fresh one
+        speaks with little history. Stage runs 1..7, depth 0..5."""
+        try:
+            stage = self._entity_activity(entity_key)["stage"]
+        except Exception:
+            stage = 1
+        return max(0, min(5, stage - 1))
+
+    def _entity_own_memories(self, entity_key: str, n: int) -> list[dict]:
+        """The entity's own recent question/answer history."""
+        if n <= 0:
+            return []
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT question, answer, timestamp FROM entity_memories "
+                "WHERE entity=? ORDER BY id DESC LIMIT ?", (entity_key.lower(), n)
+            ).fetchall()
+        return [{"q": r[0], "a": r[1], "ts": r[2]} for r in rows]
+
     async def _entity_ask(self, entity: str, question: str, context: str = "") -> dict:
         """Ask a specific entity agent a question."""
         key = entity.lower()
         if key not in self._ENTITY_PERSONAS:
             return {"error": f"Unknown entity: {entity}. Valid: {list(self._ENTITY_PERSONAS)}"}
 
-        # Recent relevant memories for context
-        if not context and self.mega_brain:
-            mems = self.mega_brain.search(question, n=5)
-            context = "\n".join(
-                f"[{m.get('ts','')[:10]}] {(m.get('q') or '')[:100]} → {(m.get('a') or '')[:200]}"
-                for m in mems
-            )
+        if not context:
+            parts = []
+            # Consequence of evolution stage: the entity's own remembered
+            # history, deeper the more it has been engaged.
+            depth = self._entity_context_depth(key)
+            own = self._entity_own_memories(key, depth)
+            if own:
+                parts.append("Your own past words (most recent first):\n" + "\n".join(
+                    f"[{m['ts'][:10]}] asked: {(m['q'] or '')[:80]} — you said: {(m['a'] or '')[:160]}"
+                    for m in own
+                ))
+            # Plus relevant global memory, as before.
+            if self.mega_brain:
+                mems = self.mega_brain.search(question, n=5)
+                gm = "\n".join(
+                    f"[{m.get('ts','')[:10]}] {(m.get('q') or '')[:100]} → {(m.get('a') or '')[:200]}"
+                    for m in mems
+                )
+                if gm:
+                    parts.append(gm)
+            context = "\n\n".join(parts)
 
         messages = [
             {"role": "system", "content": self._entity_system_prompt(key, context)},
@@ -1331,6 +1367,9 @@ class NovaConsciousness:
             "last_seen":     asks[2][:19] if asks[2] else None,
             "stage":         stage,
             "max_stage":     len(milestones),
+            # Consequence: how much of its own history the entity carries
+            # into each answer (0–5), so the stage is functional, not a badge.
+            "memory_depth":  max(0, min(5, stage - 1)),
         }
 
     def entity_evolution(self, entity_key: str = None) -> dict:

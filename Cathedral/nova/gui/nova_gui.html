@@ -1856,8 +1856,10 @@ async function loadEntityEvolution() {
     const el = document.getElementById('stage-' + e.entity);
     if (!el) return;
     const dots = '●'.repeat(e.stage) + '○'.repeat(Math.max(0, e.max_stage - e.stage));
-    el.textContent = `${dots}  ${e.interactions} exchanges`;
-    el.title = `Evolution stage ${e.stage}/${e.max_stage} · ${e.interactions} asks · ${e.resonance_events} resonance events`;
+    const depth = (typeof e.memory_depth === 'number') ? e.memory_depth : Math.max(0, e.stage - 1);
+    el.textContent = `${dots}  ${e.interactions} exchanges · recalls ${depth}`;
+    el.title = `Evolution stage ${e.stage}/${e.max_stage} · ${e.interactions} asks · ${e.resonance_events} resonance events\n`
+             + `Consequence: carries its own last ${depth} interaction(s) into each answer`;
   });
 }
 
