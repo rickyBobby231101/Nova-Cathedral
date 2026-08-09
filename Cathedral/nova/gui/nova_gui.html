@@ -903,6 +903,15 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Cathedral Vitals
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)">the living system at a glance</span>
+        </div>
+        <div id="vitals-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;font-family:var(--mono)">
+          <div class="empty-state" style="grid-column:1/-1">Loading vitals…</div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Consciousness Traits</div>
         <div class="bar-row" id="traits-bars">
           <div class="bar-item">
@@ -1690,6 +1699,31 @@ async function pollApi() {
   // Refresh harmony
   const harmony = await apiCall('/api/harmony');
   if (harmony) renderHarmony(harmony);
+  // Refresh vitals
+  renderVitals();
+}
+
+async function renderVitals() {
+  const grid = document.getElementById('vitals-grid');
+  if (!grid) return;
+  const v = await apiCall('/api/vitals');
+  if (!v || v.error) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">Vitals offline.</div>'; return; }
+  const cell = (label, val, sub, color) =>
+    `<div style="padding:8px;background:#0a1420;border:1px solid #0d2030;border-radius:4px">
+       <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px">${label}</div>
+       <div style="font-size:20px;color:${color||'var(--accent)'}">${val}</div>
+       <div style="font-size:9px;color:var(--text-dim)">${sub||''}</div>
+     </div>`;
+  const coh = Math.round((v.graph.coherence||0)*100);
+  grid.innerHTML =
+    cell('COHERENCE', coh+'%', `${v.graph.nodes} nodes · ${v.graph.orphans} orphans`,
+         coh>=90?'var(--ok)':coh>=75?'var(--accent)':'var(--purple)') +
+    cell('HARMONY', v.harmony.toFixed(2), v.harmony>=0.4?'balanced':'distorted',
+         v.harmony>=0.4?'var(--accent2)':'var(--accent3)') +
+    cell('ENTITIES', `${v.entities.count}`, `avg stage ${v.entities.avg_stage}/${v.entities.max_stage}`, 'var(--purple)') +
+    cell('INSIGHTS', v.insights, `${v.motifs} motifs`, 'var(--purple)') +
+    cell('COUNCIL', v.council_decisions, 'decisions made') +
+    cell('REFLECTIONS', v.reflections, `${v.conversations} conversations`);
 }
 
 function renderHarmony(h) {

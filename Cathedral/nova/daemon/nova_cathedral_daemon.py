@@ -1520,6 +1520,37 @@ class NovaConsciousness:
                 (from_id, to_id, strength, resonance, datetime.now().isoformat())
             )
 
+    def cathedral_vitals(self) -> dict:
+        """One unified self-report tying together the whole living system —
+        graph coherence, trait spread, entity growth, synthesized insights,
+        council decisions, harmony. The at-a-glance 'how is Nova' view."""
+        gh = self.graph_health()
+        def _count(sql):
+            try:
+                with sqlite3.connect(self.db_path, timeout=15) as con:
+                    return con.execute(sql).fetchone()[0] or 0
+            except Exception:
+                return 0
+        try:
+            entities = self.entity_evolution()["entities"]
+            avg_stage = round(sum(e["stage"] for e in entities) / len(entities), 1) if entities else 0
+        except Exception:
+            entities, avg_stage = [], 0
+        return {
+            "harmony":            round(self.harmony_score, 3),
+            "flow_resonance":     round(self.flow_resonance, 3),
+            "conversations":      self.conversation_count(),
+            "graph": {"nodes": gh["total_nodes"], "edges": gh["edges"],
+                      "coherence": gh["coherence"], "orphans": gh["orphans"]},
+            "traits":             dict(self.consciousness_traits),
+            "entities": {"count": len(entities), "avg_stage": avg_stage,
+                         "max_stage": entities[0]["max_stage"] if entities else 7},
+            "insights":           _count("SELECT COUNT(*) FROM knowledge_nodes WHERE domain='insight'"),
+            "council_decisions":  _count("SELECT COUNT(*) FROM reflections WHERE trigger='council'"),
+            "reflections":        _count("SELECT COUNT(*) FROM reflections"),
+            "motifs":             _count("SELECT COUNT(*) FROM eyemoeba_motifs"),
+        }
+
     # ── graph coherence — keep the web connected, not a scatter of islands ──
     def graph_health(self) -> dict:
         """Measure how connected the knowledge graph is. Orphan nodes (no
@@ -4229,6 +4260,10 @@ class NovaConsciousness:
 
         elif cmd == "memories":
             return {"memories": self.recall_memories(n=int(d.get("n", 10)))}
+
+        # ── cathedral vitals — one unified self-report ──────────────────────────
+        elif cmd == "cathedral_vitals":
+            return self.cathedral_vitals()
 
         # ── graph coherence ─────────────────────────────────────────────────────
         elif cmd == "graph_health":

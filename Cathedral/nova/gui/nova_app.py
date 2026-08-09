@@ -438,6 +438,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("weaver_relabel", timeout=600.0, domain=domain)
             return result or {"error": "daemon unreachable"}
 
+        # ── cathedral vitals — unified self-report ──────────────────────────────
+        if path == "/api/vitals":
+            result = _daemon_call("cathedral_vitals", timeout=8.0)
+            return result or {"error": "daemon unreachable"}
+
         # ── graph coherence: health + orphan healing ────────────────────────────
         if path == "/api/graph/health":
             result = _daemon_call("graph_health", timeout=5.0)

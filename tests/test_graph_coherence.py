@@ -80,3 +80,17 @@ def test_weave_orphans_idempotent_on_healthy_graph(nova):
     res = nova.weave_orphans()
     assert res["orphans_found"] == 0
     assert res["edges_woven"] == 0
+
+
+def test_cathedral_vitals_aggregates_system(nova):
+    a = _add(nova, "herbal", "Yarrow", "yarrow wound healing tissue")
+    b = _add(nova, "herbal", "Plantain", "plantain wound healing tissue")
+    nova._knowledge_connect(a, b)
+    _add(nova, "insight", "Pattern: light", "light threads energy and life")
+
+    v = nova.cathedral_vitals()
+    assert v["graph"]["nodes"] == 3
+    assert v["insights"] == 1
+    assert "coherence" in v["graph"]
+    assert v["entities"]["count"] == len(nova._ENTITY_PERSONAS)
+    assert "harmony" in v and "traits" in v
