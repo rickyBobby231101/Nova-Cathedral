@@ -1025,9 +1025,13 @@
           <div id="entity-response-text"></div>
         </div>
         <div id="eyemoeba-motifs-panel" style="display:none;margin-top:12px">
-          <div class="e-label">DETECTED PATTERNS — real cross-domain analysis of the knowledge web</div>
+          <div class="e-label" style="display:flex;align-items:center;gap:8px">
+            DETECTED PATTERNS — real cross-domain analysis
+            <button onclick="eyemoebaScan()" style="margin-left:auto;font-size:10px;padding:2px 8px">SCAN NOW</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);margin:2px 0 4px">Click a pattern to have Eyemoeba explain what it means.</div>
           <div id="eyemoeba-motifs-list" style="font-size:12px;line-height:1.7"></div>
-          <div class="e-label" style="margin-top:14px">SYNTHESIZED INSIGHTS — what the patterns mean (auto-generated over time)</div>
+          <div class="e-label" style="margin-top:14px">SYNTHESIZED INSIGHTS — what the patterns mean (auto-generated every ~30 min, or on click)</div>
           <div id="eyemoeba-insights-list" style="font-size:12px;line-height:1.6"></div>
         </div>
       </div>
@@ -1352,6 +1356,16 @@
           <div style="margin-top:8px">
             <button id="kg-add-btn" class="green" onclick="addKnowledge()">ADD TO CATHEDRAL</button>
           </div>
+        </div>
+        <!-- Weaver cleanup -->
+        <div style="padding:10px;background:#080e18;border:1px solid #0d2030;border-radius:4px">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:2px;margin-bottom:6px">THE WEAVER — TITLE CLEANUP</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Have the Weaver read node content and rewrite messy labels into clean titles. Runs an LLM per batch — can take a few minutes for a large domain.</div>
+          <div style="display:flex;gap:8px">
+            <input id="weaver-domain" placeholder="domain (blank = all)" style="flex:1;background:#0a1a2a;border:1px solid #1a3a5a;color:var(--text);padding:6px 8px;font-family:var(--mono);font-size:12px;border-radius:3px">
+            <button onclick="weaverRelabel()">CLEAN LABELS</button>
+          </div>
+          <div id="weaver-relabel-status" style="font-size:11px;color:var(--text-dim);margin-top:6px"></div>
         </div>
       </div>
     </div>
@@ -1849,10 +1863,34 @@ async function loadEyemoebaMotifs() {
     return;
   }
   list.innerHTML = data.motifs.map(m =>
-    `<div>◎ <strong>${escHtml(m.term)}</strong>` +
+    `<div class="motif-row" onclick="eyemoebaInsight('${escHtml(m.term)}')" ` +
+    `style="cursor:pointer" title="Click: have Eyemoeba explain this pattern">` +
+    `◎ <strong>${escHtml(m.term)}</strong>` +
     ` <span style="color:var(--text-dim)">spans ${m.domains.map(escHtml).join(' · ')}` +
     ` (${m.node_count} nodes)</span></div>`
   ).join('');
+}
+
+async function eyemoebaScan() {
+  const list = document.getElementById('eyemoeba-motifs-list');
+  list.innerHTML = '<span style="color:var(--text-dim)">Scanning the knowledge web…</span>';
+  const r = await apiCall('/api/eyemoeba/scan', 'POST');
+  if (r && !r.error) {
+    await loadEyemoebaMotifs();
+  } else {
+    list.innerHTML = `<span style="color:var(--text-dim)">Scan failed: ${escHtml((r||{}).error||'offline')}</span>`;
+  }
+}
+
+async function eyemoebaInsight(term) {
+  const ins = document.getElementById('eyemoeba-insights-list');
+  ins.innerHTML = `<span style="color:var(--text-dim)">Eyemoeba is contemplating '${escHtml(term)}'… (a real synthesis, ~30-60s)</span>`;
+  const r = await apiCall('/api/eyemoeba/insight', 'POST', {term});
+  if (r && r.insight) {
+    await loadEyemoebaInsights();
+  } else {
+    ins.innerHTML = `<span style="color:var(--text-dim)">${escHtml((r||{}).error||'synthesis failed')}</span>`;
+  }
 }
 
 async function askEntity() {
@@ -2927,6 +2965,20 @@ async function addKnowledge() {
     await loadKnowledgeGraph(kgDomainFilter);
   } else {
     logActivity('err', 'Knowledge add failed: ' + JSON.stringify(data));
+  }
+}
+
+async function weaverRelabel() {
+  const domain = (document.getElementById('weaver-domain').value || '').trim();
+  const status = document.getElementById('weaver-relabel-status');
+  status.textContent = `The Weaver is reading ${domain || 'all'} nodes and rewriting titles… this may take minutes.`;
+  const data = await apiCall('/api/weaver/relabel', 'POST', {domain});
+  if (data && typeof data.relabeled === 'number') {
+    status.textContent = `Relabeled ${data.relabeled} of ${data.total} nodes` +
+      (data.rejected ? `, rejected ${data.rejected} drifted titles` : '') + '.';
+    await loadKnowledgeGraph(kgDomainFilter);
+  } else {
+    status.textContent = 'Relabel failed: ' + ((data||{}).error || 'offline');
   }
 }
 

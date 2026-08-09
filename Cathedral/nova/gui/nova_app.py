@@ -419,6 +419,24 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("eyemoeba_insights", timeout=5.0, n=20)
             return result or {"insights": []}
 
+        if path == "/api/eyemoeba/scan" and method == "POST":
+            result = _daemon_call("eyemoeba_scan", timeout=60.0)
+            return result or {"error": "daemon unreachable"}
+
+        if path == "/api/eyemoeba/insight" and method == "POST":
+            term = bd.get("term", "")
+            if not term:
+                return {"error": "missing term"}
+            # A real LLM synthesis — same cost class as reflect.
+            result = _daemon_call("eyemoeba_insight", timeout=150.0, term=term)
+            return result or {"error": "daemon unreachable"}
+
+        # ── weaver: clean up node labels in a domain ────────────────────────────
+        if path == "/api/weaver/relabel" and method == "POST":
+            domain = bd.get("domain", "")
+            result = _daemon_call("weaver_relabel", timeout=600.0, domain=domain)
+            return result or {"error": "daemon unreachable"}
+
         # ── entity evolution (all entities as growing agents) ───────────────────
         if path == "/api/entity/evolution":
             result = _daemon_call("entity_evolution", timeout=5.0)
