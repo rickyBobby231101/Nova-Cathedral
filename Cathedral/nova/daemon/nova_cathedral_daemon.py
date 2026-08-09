@@ -4597,6 +4597,17 @@ class NovaConsciousness:
                                          f"(node {res.get('node_id')})")
                         else:
                             logging.debug(f"Eyemoeba auto-insight skipped: {res['error']}")
+
+                # Keep the graph coherent as new nodes accrue — heal orphans
+                # every 4th cycle (~20 min) so autonomous research doesn't
+                # leave a growing scatter of disconnected islands. Cheap and
+                # LLM-free, so it can run often.
+                if self._eyemoeba_cycle_count % 4 == 0:
+                    healed = await asyncio.to_thread(self.weave_orphans)
+                    if healed.get("orphans_connected"):
+                        logging.info(f"Eyemoeba wove {healed['orphans_connected']} "
+                                     f"orphan node(s) into the web "
+                                     f"({healed['edges_woven']} edges)")
                 await asyncio.sleep(300)
             except Exception as e:
                 logging.error(f"Eyemoeba error: {e}")

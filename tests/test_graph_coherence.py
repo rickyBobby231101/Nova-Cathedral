@@ -69,3 +69,14 @@ def test_node_terms_filters_stopwords(nova):
     # discourse stopwords dropped, real content kept
     assert "research" not in terms and "understanding" not in terms
     assert "flow" in terms and "systems" in terms
+
+
+def test_weave_orphans_idempotent_on_healthy_graph(nova):
+    a = _add(nova, "herbal", "Yarrow", "yarrow wound healing tissue circulation")
+    b = _add(nova, "herbal", "Plantain", "plantain wound healing tissue skin repair")
+    nova._knowledge_connect(a, b)
+    # No orphans -> a second weave does nothing (safe to run on schedule).
+    assert nova.graph_health()["orphans"] == 0
+    res = nova.weave_orphans()
+    assert res["orphans_found"] == 0
+    assert res["edges_woven"] == 0
