@@ -100,7 +100,7 @@ Nova-Cathedral/
 `code_inspect`, `code_evolve`, `resilience_status`,
 `pending_questions`, `answer_question`, `teach`,
 `crypt_status`, `crypt_entries`, `crypt_run`,
-`eyemoeba_motifs`, `eyemoeba_scan`,
+`eyemoeba_motifs`, `eyemoeba_scan`, `eyemoeba_insight`, `eyemoeba_insights`,
 `phoenix_history`, `zorya_cycles`, `entity_evolution`,
 `agent_ask`, `council_ask`, `entity_list`, `entity_memories`,
 `weaver_relabel`
