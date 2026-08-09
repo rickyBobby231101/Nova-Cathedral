@@ -918,18 +918,25 @@ class NovaConsciousness:
         ]
         result = await self._ollama_chat(messages, timeout=120)
         if "error" not in result:
-            # Save entity memory
+            resp = result.get("response", "")
+            # Never persist a non-answer (state-line echo, refusal, prompt
+            # echo). It would land in entity_memories and then be fed back as
+            # the entity's "own past words", compounding into worse answers.
+            if self._is_nonanswer(resp):
+                logging.info(f"{key} produced a non-answer — not stored")
+                return {"error": "entity produced a non-answer (state echo / refusal); not stored",
+                        "raw": resp}
             with sqlite3.connect(self.db_path) as con:
                 con.execute(
                     "INSERT INTO entity_memories (entity, question, answer, timestamp) VALUES (?,?,?,?)",
-                    (key, question, result["response"], datetime.now().isoformat())
+                    (key, question, resp, datetime.now().isoformat())
                 )
             # Log as resonance event — show what the entity actually said, not
             # what it was asked (the question is already visible in the UI
             # that triggered this; the point of this log is to surface behavior)
             self._log_resonance_event("entity_invoked", entity=key,
                                       delta=0.02,
-                                      description=f"{key}: {result['response'][:80]}")
+                                      description=f"{key}: {resp[:80]}")
         return result
 
     async def _council_ask(self, question: str, entities: list = None) -> dict:
@@ -2147,6 +2154,29 @@ class NovaConsciousness:
         if not text:
             return False
         return self._PROMPT_ECHO_FINGERPRINT in text.lower()
+
+    _STATE_ECHO_RE = re.compile(r"^\W{0,3}(?:cathedral\s+)?state\b|flow\s+\d+\.\d+\s*hz", re.I)
+
+    def _looks_like_state_echo(self, text: str) -> bool:
+        """The small model sometimes regurgitates the background state line
+        ('Cathedral state: Flow X Hz | Harmony ...'), which the entity prompt
+        explicitly says not to quote back. Catch it so it isn't stored as the
+        entity's answer and then fed back as its own history — a pollution
+        feedback loop, since a stored state-echo makes the next answer worse."""
+        if not text:
+            return False
+        head = text.strip()[:140]
+        if self._STATE_ECHO_RE.search(head):
+            return True
+        low = head.lower()
+        return "flow" in low and "hz" in low and "harmony" in low
+
+    def _is_nonanswer(self, text: str) -> bool:
+        """A response that shouldn't be persisted as a real entity answer."""
+        return (not text or len(text.strip()) < 12
+                or self._looks_like_refusal(text)
+                or self._looks_like_prompt_echo(text)
+                or self._looks_like_state_echo(text))
 
     async def _process_goal(self, goal: dict):
         """Execute one goal — research it and store the finding."""
