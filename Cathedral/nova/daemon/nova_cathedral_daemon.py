@@ -974,7 +974,10 @@ class NovaConsciousness:
             "where they agree, where they tension, and what you conclude as "
             "Nova. Be specific and decisive. 3-4 sentences."
         )
-        synth = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=120)
+        # The synthesis is the council's payoff and runs last, after the
+        # entity calls have already loaded the system — give it real headroom
+        # so it isn't the call that gets starved and drops the judgment.
+        synth = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=180)
         if "error" not in synth:
             _, answer = self._parse_reasoning(synth["response"])
             answer = (answer or synth["response"]).strip()
