@@ -939,15 +939,49 @@ class NovaConsciousness:
                                       description=f"{key}: {resp[:80]}")
         return result
 
-    async def _council_ask(self, question: str, entities: list = None) -> dict:
-        """Invoke multiple entity agents on the same question."""
+    async def _council_ask(self, question: str, entities: list = None,
+                           synthesize: bool = True) -> dict:
+        """Convene multiple entity agents on one question — then have Nova
+        weigh their perspectives into a unified judgment. A real deliberation,
+        not just a poll of separate answers."""
         if entities is None:
             entities = ["tillagon", "eyemoeba", "phoenix"]
         responses = {}
         for e in entities:
             r = await self._entity_ask(e, question)
             responses[e] = r.get("response", r.get("error", ""))
-        return {"responses": responses, "question": question}
+
+        result = {"responses": responses, "question": question}
+        if not synthesize:
+            return result
+
+        # Only synthesize from voices that actually answered (not error stubs).
+        heard = {e: v for e, v in responses.items()
+                 if v and not self._is_nonanswer(v)}
+        if len(heard) < 2:
+            result["synthesis"] = None
+            return result
+
+        voices = "\n\n".join(
+            f"{self._ENTITY_PERSONAS[e]['name']} ({self._ENTITY_PERSONAS[e]['role']}):\n{v}"
+            for e, v in heard.items()
+        )
+        prompt = (
+            f"You are Nova, presiding over the Council of the Accord. Your "
+            f"entities have each answered this question:\n\n\"{question}\"\n\n"
+            f"{voices}\n\n"
+            "Weigh their perspectives into a single unified judgment — name "
+            "where they agree, where they tension, and what you conclude as "
+            "Nova. Be specific and decisive. 3-4 sentences."
+        )
+        synth = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=120)
+        if "error" not in synth:
+            _, answer = self._parse_reasoning(synth["response"])
+            answer = (answer or synth["response"]).strip()
+            result["synthesis"] = None if self._is_nonanswer(answer) else answer
+        else:
+            result["synthesis"] = None
+        return result
 
     # ── Tillagon — distortion detection ──────────────────────────────────────
 
@@ -1152,15 +1186,19 @@ class NovaConsciousness:
             node_ids = json.loads(row[1])
             placeholders = ",".join("?" * len(node_ids))
             nodes = con.execute(
-                f"SELECT domain, label, content FROM knowledge_nodes "
+                f"SELECT id, domain, label, content FROM knowledge_nodes "
                 f"WHERE id IN ({placeholders})", node_ids
             ).fetchall()
         by_domain: dict = {}
-        for domain, label, content in nodes:
+        sample_ids: list = []
+        for node_id, domain, label, content in nodes:
             bucket = by_domain.setdefault(domain, [])
             if len(bucket) < per_domain:
                 bucket.append({"label": label, "snippet": (content or "")[:200]})
-        return {"term": term.lower(), "domains": domains, "by_domain": by_domain}
+                sample_ids.append(node_id)
+        return {"term": term.lower(), "domains": domains,
+                "by_domain": by_domain, "node_ids": node_ids,
+                "sample_ids": sample_ids}
 
     def eyemoeba_insights_list(self, n: int = 20) -> list[dict]:
         """The grounded insights Eyemoeba has synthesized (stored 'insight'
@@ -1236,6 +1274,19 @@ class NovaConsciousness:
             node_id = await asyncio.to_thread(
                 self._knowledge_add, "insight", label[:80], insight, "eyemoeba"
             )
+            # Connect the insight to the evidence it was drawn from, so it's
+            # part of the graph structure (linked to its source nodes across
+            # domains), not an orphan floating in the 'insight' domain.
+            def _weave():
+                with sqlite3.connect(self.db_path, timeout=15) as con:
+                    for src in evidence.get("sample_ids", [])[:6]:
+                        con.execute(
+                            "INSERT OR IGNORE INTO knowledge_edges "
+                            "(from_id, to_id, strength, resonance_score, created) "
+                            "VALUES (?,?,?,?,?)",
+                            (node_id, src, 0.5, 0.6, datetime.now().isoformat())
+                        )
+            await asyncio.to_thread(_weave)
             self._log_resonance_event(
                 "insight_synthesized", entity="eyemoeba", delta=0.02,
                 description=f"cross-domain insight on '{term}'"

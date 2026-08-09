@@ -359,8 +359,9 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/council" and method == "POST":
             question = bd.get("question", bd.get("content", ""))
             entities = bd.get("entities", ["tillagon", "eyemoeba", "phoenix"])
-            # Try daemon council_ask first
-            result = _daemon_call("council_ask", timeout=180.0,
+            # Try daemon council_ask first — entities + a synthesis pass, so
+            # allow for several serialized LLM calls.
+            result = _daemon_call("council_ask", timeout=420.0,
                                   question=question, entities=entities)
             if result and "responses" in result:
                 return result

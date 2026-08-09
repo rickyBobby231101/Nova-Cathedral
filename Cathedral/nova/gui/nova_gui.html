@@ -1936,6 +1936,15 @@ async function conveneCouncil(selective=false) {
 
   if (data.responses) {
     result.innerHTML = '';
+    if (data.synthesis) {
+      const syn = document.createElement('div');
+      syn.className = 'council-entry';
+      syn.style.borderLeft = '3px solid var(--accent)';
+      syn.style.background = 'rgba(120,180,255,0.06)';
+      syn.innerHTML = `<div class="ce-name" style="color:var(--accent)">⚖ NOVA'S JUDGMENT</div>`
+                    + `<div class="ce-text">${escHtml(data.synthesis)}</div>`;
+      result.appendChild(syn);
+    }
     for (const [entity, response] of Object.entries(data.responses)) {
       const entry = document.createElement('div');
       entry.className = 'council-entry';
