@@ -1053,6 +1053,52 @@ class NovaConsciousness:
             result["synthesis"] = None
         return result
 
+    async def _party_scene(self, prompt: str, entities: list = None) -> dict:
+        """A narrative party scene, not a judgment: entities react to the prompt
+        AND to each other in sequence, in character. Deliberately does not
+        persist to entity_memories/reflections/resonance — this is flavor, not
+        the mechanical Accord/harmony layer _council_ask feeds."""
+        if entities is None:
+            entities = ["tillagon", "eyemoeba", "phoenix"]
+        scene = []   # (name, line) already spoken, feeds the next entity's context
+        out = []     # returned transcript
+        for e in entities:
+            key = e.lower()
+            persona = self._ENTITY_PERSONAS.get(key)
+            if not persona:
+                out.append({"entity": key, "name": e, "text": None,
+                           "error": f"unknown entity: {e}. Valid: {list(self._ENTITY_PERSONAS)}"})
+                continue
+            if scene:
+                transcript = "\n".join(f"{n}: {t}" for n, t in scene)
+                context = (
+                    f"You are in a live scene with the rest of the party, reacting to: "
+                    f"\"{prompt}\"\n\nWhat has been said so far:\n{transcript}\n\n"
+                    "Speak in character, brief and vivid (2-4 sentences). You may address "
+                    "the others by name and react to what they said — this is a scene, not a report."
+                )
+            else:
+                context = (
+                    f"You are in a live scene, first to respond to: \"{prompt}\"\n\n"
+                    "Speak in character, brief and vivid (2-4 sentences) — a scene, not a report."
+                )
+            messages = [
+                {"role": "system", "content": self._entity_system_prompt(key, context)},
+                {"role": "user", "content": prompt},
+            ]
+            result = await self._ollama_chat(messages, timeout=120)
+            if "error" in result:
+                out.append({"entity": key, "name": persona["name"], "text": None, "error": result["error"]})
+                continue
+            _, text = self._parse_reasoning(result["response"])
+            text = (text or result["response"]).strip()
+            if self._is_nonanswer(text):
+                out.append({"entity": key, "name": persona["name"], "text": None, "error": "non-answer"})
+                continue
+            scene.append((persona["name"], text))
+            out.append({"entity": key, "name": persona["name"], "text": text})
+        return {"prompt": prompt, "scene": out}
+
     # ── Tillagon — distortion detection ──────────────────────────────────────
 
     # Below this, harmony_score is "distorted" rather than "balanced" — the
@@ -3577,6 +3623,13 @@ class NovaConsciousness:
                 return {"error": "missing question"}
             return await self._council_ask(question, entities)
 
+        elif cmd == "party_ask":
+            prompt = d.get("prompt", d.get("content", d.get("question", "")))
+            entities = d.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            if not prompt:
+                return {"error": "missing prompt"}
+            return await self._party_scene(prompt, entities)
+
         elif cmd == "entity_memories":
             entity = d.get("entity", "")
             n      = int(d.get("n", 10))
@@ -4575,7 +4628,7 @@ class NovaConsciousness:
                     # context
                     "system_prompt", "context_for",
                     # entity agents
-                    "agent_ask", "council_ask", "entity_memories", "entity_list",
+                    "agent_ask", "council_ask", "party_ask", "entity_memories", "entity_list",
                     # harmony / rose cathedral
                     "harmony", "knowledge_add", "knowledge_graph", "knowledge_domains",
                     "knowledge_node",

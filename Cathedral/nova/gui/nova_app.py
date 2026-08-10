@@ -397,6 +397,26 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             reply  = chat_reply([{"role": "user", "content": prompt}], timeout=300)
             return {"responses": {e: reply for e in entities}}
 
+        if path == "/api/party" and method == "POST":
+            prompt   = bd.get("prompt", bd.get("content", bd.get("question", "")))
+            entities = bd.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            # Try daemon party_ask first — a narrative scene, not a judgment;
+            # entities react to the prompt and to each other in sequence.
+            # Sequential, each up to 120s under the daemon's single Ollama lock —
+            # the socket timeout must scale with entity count, or FULL PARTY
+            # (6 entities, up to 720s) silently falls back to a degraded scene.
+            party_timeout = 60.0 + 130.0 * max(1, len(entities))
+            result = _daemon_call("party_ask", timeout=party_timeout,
+                                  prompt=prompt, entities=entities)
+            if result and "scene" in result:
+                return result
+            # Fallback: single combined prompt
+            names = ", ".join(entities)
+            fallback_prompt = (f"Write a short in-character scene where {names} each react "
+                               f"in turn, addressing each other, to: {prompt}")
+            reply = chat_reply([{"role": "user", "content": fallback_prompt}], timeout=300)
+            return {"scene": [{"entity": "party", "name": "The Party", "text": reply}]}
+
         if path == "/api/entity/list":
             result = _daemon_call("entity_list", timeout=3.0)
             if result:

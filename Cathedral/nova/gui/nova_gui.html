@@ -1063,6 +1063,17 @@
       </div>
 
       <div class="card">
+        <div class="card-title">The Fellowship</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">A scene, not a judgment — the party reacts to the moment and to each other, in character.</div>
+        <textarea id="party-prompt" placeholder="Set a scene for the party…"></textarea>
+        <div class="btn-row">
+          <button class="purple" onclick="gatherParty()">GATHER THE PARTY</button>
+          <button onclick="gatherParty(true)">FULL PARTY (ALL SIX)</button>
+        </div>
+        <div class="council-result" id="party-result"></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Entity Memory Archive</div>
         <div class="btn-row" style="margin-bottom:12px;margin-top:0">
           <button onclick="loadEntityMemories()">LOAD MEMORIES</button>
@@ -2084,6 +2095,34 @@ async function conveneCouncil(selective=false) {
   }
 }
 
+async function gatherParty(full=false) {
+  const prompt = document.getElementById('party-prompt').value.trim();
+  if (!prompt) return;
+  const result = document.getElementById('party-result');
+  result.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--purple)">The party gathers…</div>';
+  result.classList.add('visible');
+
+  const body = {prompt};
+  if (full) body.entities = ['tillagon','eyemoeba','phoenix','zorya','jorlaan','weaver'];
+
+  const data = await apiCall('/api/party', 'POST', body);
+  if (!data) { result.innerHTML = '[API offline]'; return; }
+
+  if (data.scene) {
+    result.innerHTML = '';
+    for (const line of data.scene) {
+      const entry = document.createElement('div');
+      entry.className = 'council-entry';
+      entry.innerHTML = line.text
+        ? `<div class="ce-name">${escHtml(line.name.toUpperCase())}</div><div class="ce-text">${escHtml(line.text)}</div>`
+        : `<div class="ce-name" style="color:var(--text-dim)">${escHtml(line.name.toUpperCase())} — silent</div>`;
+      result.appendChild(entry);
+    }
+  } else {
+    result.textContent = JSON.stringify(data, null, 2);
+  }
+}
+
 async function loadEntityMemories() {
   const list = document.getElementById('entity-memory-list');
   list.innerHTML = '<div class="empty-state">Loading…</div>';
@@ -2896,10 +2935,28 @@ function escHtml(s) {
 }
 
 // ── Rose Window — Knowledge Graph ─────────────────────────────────────────────
-const KG_COLORS = [
-  '#00c8ff','#7c5cbf','#2ecc71','#e67e22','#e74c3c',
-  '#9b59b6','#1abc9c','#f39c12','#3498db','#e91e63',
-];
+// Domain colors are dispersed across the visible spectrum in order — the rose
+// window as a Persian rainbow temple, each domain its own frequency of one
+// light, not an arbitrary palette that repeats and collides past 10 domains.
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const to255 = x => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${to255(f(0))}${to255(f(8))}${to255(f(4))}`;
+}
+function spectrumColors(n) {
+  // Red (0°) through violet (~290°) — a true dispersed spectrum, not a
+  // wraparound wheel (wrapping back to red would make the ends look adjacent).
+  const HUE_SPAN = 290;
+  const colors = [];
+  for (let i = 0; i < n; i++) {
+    const hue = n <= 1 ? 0 : (i * HUE_SPAN) / (n - 1);
+    colors.push(hslToHex(hue, 70, 58));
+  }
+  return colors;
+}
 
 let kgNodes = [], kgEdges = [], kgSelectedNode = null, kgDomainFilter = '', kgHarmony = 0.5;
 
@@ -2957,9 +3014,10 @@ function renderRoseWindow(svg, nodes, edges, opts = {}) {
   const C = 300;
   const P = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
 
-  const domains = [...new Set(nodes.map(n => n.domain))];
+  const domains = [...new Set(nodes.map(n => n.domain))].sort();
   const colorMap = {};
-  domains.forEach((d, i) => colorMap[d] = KG_COLORS[i % KG_COLORS.length]);
+  const spectrum = spectrumColors(domains.length);
+  domains.forEach((d, i) => colorMap[d] = spectrum[i]);
 
   // Classic rose-window petal counts; empty petals await future domains
   const petalCount = [8, 12, 16, 24].find(c => c >= domains.length) || domains.length;
