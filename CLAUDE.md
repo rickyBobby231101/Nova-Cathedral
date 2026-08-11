@@ -103,6 +103,7 @@ Nova-Cathedral/
 `eyemoeba_motifs`, `eyemoeba_scan`, `eyemoeba_insight`, `eyemoeba_insights`,
 `phoenix_history`, `zorya_cycles`, `entity_evolution`,
 `agent_ask`, `council_ask`, `party_ask`, `entity_list`, `entity_memories`,
+`campaign_continue`, `campaign_log`, `roll_check`,
 `weaver_relabel`, `trait_state`, `graph_health`, `weave_orphans`,
 `cathedral_vitals`, `self_report`, `weaver_state`, `jorlaan_serendipity`
 

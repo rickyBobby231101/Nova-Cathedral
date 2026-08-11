@@ -417,6 +417,28 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             reply = chat_reply([{"role": "user", "content": fallback_prompt}], timeout=300)
             return {"scene": [{"entity": "party", "name": "The Party", "text": reply}]}
 
+        if path == "/api/campaign/continue" and method == "POST":
+            nudge    = bd.get("nudge", "")
+            entities = bd.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            # DM narration call + one sequential call per entity, all under the
+            # daemon's single Ollama lock — same scaling as /api/party, plus a
+            # flat 90s for the narration pass.
+            campaign_timeout = 90.0 + 130.0 * max(1, len(entities))
+            result = _daemon_call("campaign_continue", timeout=campaign_timeout,
+                                  nudge=nudge, entities=entities)
+            if result and "entries" in result:
+                return result
+            return {"error": "campaign continue failed"}
+
+        if path == "/api/campaign/log":
+            result = _daemon_call("campaign_log", timeout=5.0, n=200)
+            return result if result else {"entries": []}
+
+        if path == "/api/entity/roll" and method == "POST":
+            entity = bd.get("entity", "")
+            result = _daemon_call("roll_check", timeout=5.0, entity=entity)
+            return result if result else {"error": "roll failed"}
+
         if path == "/api/entity/list":
             result = _daemon_call("entity_list", timeout=3.0)
             if result:

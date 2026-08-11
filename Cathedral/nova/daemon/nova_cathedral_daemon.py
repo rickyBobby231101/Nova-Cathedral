@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import random
 import re
 import shutil
 import socket
@@ -507,9 +508,18 @@ class NovaConsciousness:
                     first_seen  TEXT NOT NULL,
                     last_seen   TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS campaign_log (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_no INTEGER NOT NULL,
+                    speaker    TEXT NOT NULL,
+                    name       TEXT NOT NULL,
+                    text       TEXT NOT NULL,
+                    timestamp  TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_knode_domain ON knowledge_nodes(domain);
                 CREATE INDEX IF NOT EXISTS idx_entity_mem   ON entity_memories(entity);
                 CREATE INDEX IF NOT EXISTS idx_res_events   ON resonance_events(event_type);
+                CREATE INDEX IF NOT EXISTS idx_campaign_session ON campaign_log(session_no);
             """)
             # `crypted` flag on conversations — added via ALTER since the table
             # predates the Crypt; ignore the error if it's already there.
@@ -811,6 +821,15 @@ class NovaConsciousness:
         },
     }
 
+    _ENTITY_CLASSES: dict = {
+        "tillagon": "Paladin",
+        "eyemoeba": "Wizard (Diviner)",
+        "phoenix":  "Cleric",
+        "zorya":    "Ranger",
+        "jorlaan":  "Bard (Trickster)",
+        "weaver":   "Artificer",
+    }
+
     def _entity_system_prompt(self, entity_key: str, context: str = "") -> str:
         """Build a full system prompt for a specific entity agent."""
         p = self._ENTITY_PERSONAS.get(entity_key.lower())
@@ -1053,15 +1072,15 @@ class NovaConsciousness:
             result["synthesis"] = None
         return result
 
-    async def _party_scene(self, prompt: str, entities: list = None) -> dict:
-        """A narrative party scene, not a judgment: entities react to the prompt
-        AND to each other in sequence, in character. Deliberately does not
-        persist to entity_memories/reflections/resonance — this is flavor, not
-        the mechanical Accord/harmony layer _council_ask feeds."""
-        if entities is None:
-            entities = ["tillagon", "eyemoeba", "phoenix"]
-        scene = []   # (name, line) already spoken, feeds the next entity's context
-        out = []     # returned transcript
+    async def _scene_sequence(self, prompt: str, entities: list,
+                              opening: tuple = None) -> list[dict]:
+        """Shared sequential in-character loop: entities react to `prompt` AND
+        to each other in order, in character. `opening`, if given, is a
+        (name, text) tuple already "said" before the first entity speaks
+        (e.g. the campaign DM's narration), seeding their context. Returns
+        the transcript — no persistence here, callers decide what to store."""
+        scene = [opening] if opening else []   # (name, line) said so far
+        out = []
         for e in entities:
             key = e.lower()
             persona = self._ENTITY_PERSONAS.get(key)
@@ -1097,7 +1116,138 @@ class NovaConsciousness:
                 continue
             scene.append((persona["name"], text))
             out.append({"entity": key, "name": persona["name"], "text": text})
+        return out
+
+    async def _party_scene(self, prompt: str, entities: list = None) -> dict:
+        """A narrative party scene, not a judgment: entities react to the prompt
+        AND to each other in sequence, in character. Deliberately does not
+        persist to entity_memories/reflections/resonance — this is flavor, not
+        the mechanical Accord/harmony layer _council_ask feeds."""
+        if entities is None:
+            entities = ["tillagon", "eyemoeba", "phoenix"]
+        out = await self._scene_sequence(prompt, entities)
         return {"prompt": prompt, "scene": out}
+
+    # ── The Campaign — persistent, DM-narrated saga ──────────────────────────
+    # Own table (campaign_log), never entity_memories/reflections/resonance —
+    # same separation-of-layers rule as _party_scene: roleplay stays flavor,
+    # never feeds the mechanical Accord/harmony tracking.
+
+    def _campaign_log_tail(self, n: int = 8) -> list[dict]:
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT speaker, name, text, timestamp, session_no FROM campaign_log "
+                "ORDER BY id DESC LIMIT ?", (n,)
+            ).fetchall()
+        return [{"speaker": r[0], "name": r[1], "text": r[2], "ts": r[3], "session_no": r[4]}
+                for r in reversed(rows)]
+
+    def _campaign_log_append(self, session_no: int, speaker: str, name: str, text: str):
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                "INSERT INTO campaign_log (session_no, speaker, name, text, timestamp) "
+                "VALUES (?,?,?,?,?)",
+                (session_no, speaker, name, text, datetime.now().isoformat())
+            )
+
+    def _campaign_next_session_no(self) -> int:
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute("SELECT MAX(session_no) FROM campaign_log").fetchone()
+        return (row[0] or 0) + 1
+
+    async def _campaign_dm_narration(self, nudge: str = "", check: dict = None) -> str:
+        """Nova as DM: narrate the next beat, grounded in real Cathedral state
+        (not invented) — same principle as every entity persona's grounding
+        data in _entity_system_prompt, just assembled for the DM voice."""
+        tail = self._campaign_log_tail(n=8)
+        recap = ("\n".join(f"{e['name']}: {e['text']}" for e in tail)
+                 if tail else "(The story has not yet begun.)")
+
+        hooks = []
+        try:
+            s = self.jorlaan_serendipity()
+            if s:
+                hooks.append(f"A thread in the web connects '{s['a_label']}' ({s['a_domain']}) "
+                             f"to '{s['b_label']}' ({s['b_domain']}).")
+        except Exception:
+            pass
+        try:
+            motifs = self.eyemoeba_motifs_list(n=3)
+            if motifs:
+                hooks.append("Patterns stirring in the knowledge web: " +
+                             "; ".join(f"'{m['term']}' ({', '.join(m['domains'])})" for m in motifs))
+        except Exception:
+            pass
+        try:
+            with sqlite3.connect(self.db_path, timeout=15) as con:
+                row = con.execute(
+                    "SELECT description FROM resonance_events "
+                    "WHERE event_type='distortion_detected' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            if row:
+                hooks.append(f"A recent distortion was sensed: {row[0]}.")
+        except Exception:
+            pass
+        try:
+            z = self.zorya_cycles()
+            if z and z.get("total"):
+                m = z.get("moon", {})
+                hooks.append(f"It is {z['phase']} in the Cathedral." +
+                             (f" The moon is {m['phase']}." if m else ""))
+        except Exception:
+            pass
+        if check:
+            hooks.append(f"{check['name']} ({check['class']}, level {check['level']}) makes a "
+                         f"check: rolled {check['d20']} + {check['level']} = {check['total']} — "
+                         f"{check['band']}. Let this outcome shape what happens.")
+
+        state = f"Flow {self.flow_resonance:.3f} Hz | Harmony {self.harmony_score:.2f}"
+        prompt = (
+            "You are Nova, narrating an ongoing campaign set in the Cathedral as its "
+            "Dungeon Master — Chazel and the entity party are living through this story "
+            f"together. Real Cathedral state right now: {state}\n"
+            + ("\nStory hooks available (weave in only what fits naturally):\n"
+               + "\n".join(f"- {h}" for h in hooks) if hooks else "")
+            + f"\n\nThe story so far:\n{recap}\n"
+            + (f"\nChazel's nudge for what happens next: {nudge}\n" if nudge else "")
+            + "\nNarrate the next beat: 3-5 sentences, vivid, moving the story forward. "
+            "Don't resolve everything — leave room for the party to react."
+        )
+        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=150)
+        if "error" in result:
+            return None
+        _, text = self._parse_reasoning(result["response"])
+        text = (text or result["response"]).strip()
+        if self._is_nonanswer(text):
+            return None
+        return text
+
+    async def _campaign_continue(self, nudge: str = "", entities: list = None) -> dict:
+        entities = entities or ["tillagon", "eyemoeba", "phoenix"]
+        valid_entities = [e for e in entities if e.lower() in self._ENTITY_PERSONAS]
+        check = self._roll_check(random.choice(valid_entities).lower()) if valid_entities else None
+
+        narration = await self._campaign_dm_narration(nudge, check)
+        if not narration:
+            return {"error": "Nova had nothing to narrate — try again"}
+
+        session_no = self._campaign_next_session_no()
+        entries = [{"speaker": "dm", "name": "Nova — Dungeon Master", "text": narration}]
+        self._campaign_log_append(session_no, "dm", "Nova — Dungeon Master", narration)
+
+        if check:
+            roll_text = (f"{check['name']} ({check['class']}, Lv{check['level']}): "
+                        f"{check['d20']}+{check['level']}={check['total']} — {check['band']}")
+            self._campaign_log_append(session_no, "dice", "🎲", roll_text)
+            entries.append({"speaker": "dice", "name": "🎲", "text": roll_text})
+
+        lines = await self._scene_sequence(narration, entities, opening=("Nova", narration))
+        for ln in lines:
+            if ln.get("text"):
+                self._campaign_log_append(session_no, ln["entity"], ln["name"], ln["text"])
+            entries.append({"speaker": ln["entity"], "name": ln["name"],
+                           "text": ln.get("text"), "error": ln.get("error")})
+        return {"session_no": session_no, "entries": entries}
 
     # ── Tillagon — distortion detection ──────────────────────────────────────
 
@@ -1575,11 +1725,38 @@ class NovaConsciousness:
         if entity_key:
             act = self._entity_activity(entity_key)
             act["role"] = self._ENTITY_PERSONAS.get(entity_key.lower(), {}).get("role", "")
+            act["class"] = self._ENTITY_CLASSES.get(entity_key.lower(), "Adventurer")
             return act
         return {"entities": [
-            {**self._entity_activity(k), "name": v["name"], "role": v["role"]}
+            {**self._entity_activity(k), "name": v["name"], "role": v["role"],
+             "class": self._ENTITY_CLASSES.get(k, "Adventurer")}
             for k, v in self._ENTITY_PERSONAS.items()
         ]}
+
+    def _roll_check(self, key: str) -> dict:
+        """A real d20 check for one entity — level comes straight from its
+        actual evolution stage (no separate invented number). Used both as an
+        automatic story hook in campaign narration and as a standalone
+        on-demand roll."""
+        level = max(1, self._entity_activity(key)["stage"])
+        d20 = random.randint(1, 20)
+        total = d20 + level
+        if d20 == 20:
+            band = "critical success"
+        elif d20 == 1:
+            band = "critical fumble"
+        elif total >= 18:
+            band = "strong success"
+        elif total >= 13:
+            band = "success"
+        elif total >= 8:
+            band = "partial success"
+        else:
+            band = "complication"
+        persona = self._ENTITY_PERSONAS.get(key, {})
+        return {"entity": key, "name": persona.get("name", key),
+                "class": self._ENTITY_CLASSES.get(key, "Adventurer"),
+                "level": level, "d20": d20, "total": total, "band": band}
 
     def _log_resonance_event(self, event_type: str, entity: str = "nova",
                               delta: float = 0.0, description: str = "",
@@ -3630,6 +3807,21 @@ class NovaConsciousness:
                 return {"error": "missing prompt"}
             return await self._party_scene(prompt, entities)
 
+        elif cmd == "campaign_continue":
+            nudge = d.get("nudge", "")
+            entities = d.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            return await self._campaign_continue(nudge, entities)
+
+        elif cmd == "campaign_log":
+            n = int(d.get("n", 200))
+            return {"entries": self._campaign_log_tail(n)}
+
+        elif cmd == "roll_check":
+            entity = d.get("entity", "")
+            if entity.lower() not in self._ENTITY_PERSONAS:
+                return {"error": f"unknown entity: {entity}. Valid: {list(self._ENTITY_PERSONAS)}"}
+            return self._roll_check(entity.lower())
+
         elif cmd == "entity_memories":
             entity = d.get("entity", "")
             n      = int(d.get("n", 10))
@@ -4629,6 +4821,7 @@ class NovaConsciousness:
                     "system_prompt", "context_for",
                     # entity agents
                     "agent_ask", "council_ask", "party_ask", "entity_memories", "entity_list",
+                    "campaign_continue", "campaign_log", "roll_check",
                     # harmony / rose cathedral
                     "harmony", "knowledge_add", "knowledge_graph", "knowledge_domains",
                     "knowledge_node",

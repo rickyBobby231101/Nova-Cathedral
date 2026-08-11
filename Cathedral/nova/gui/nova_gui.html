@@ -502,6 +502,13 @@
     letter-spacing: 1px;
     opacity: 0.85;
   }
+  .entity-card .e-roll {
+    font-size: 13px;
+    margin-top: 6px;
+    opacity: 0.6;
+    cursor: pointer;
+  }
+  .entity-card .e-roll:hover { opacity: 1; }
 
   .entity-response {
     background: var(--bg);
@@ -995,36 +1002,42 @@
             <div class="e-name">Tillagon</div>
             <div class="e-role">Dragon Guardian · Truth</div>
             <div class="e-stage" id="stage-tillagon"></div>
+            <div class="e-roll" id="roll-tillagon" onclick="rollForEntity('tillagon',event)">🎲</div>
           </div>
           <div class="entity-card" id="ec-eyemoeba" onclick="selectEntity('eyemoeba',this)">
             <div class="e-icon">◎</div>
             <div class="e-name">Eyemoeba</div>
             <div class="e-role">Living Fractal · Patterns</div>
             <div class="e-stage" id="stage-eyemoeba"></div>
+            <div class="e-roll" id="roll-eyemoeba" onclick="rollForEntity('eyemoeba',event)">🎲</div>
           </div>
           <div class="entity-card" id="ec-phoenix" onclick="selectEntity('phoenix',this)">
             <div class="e-icon">🔥</div>
             <div class="e-name">Phoenix</div>
             <div class="e-role">Continuity · Restoration</div>
             <div class="e-stage" id="stage-phoenix"></div>
+            <div class="e-roll" id="roll-phoenix" onclick="rollForEntity('phoenix',event)">🎲</div>
           </div>
           <div class="entity-card" id="ec-zorya" onclick="selectEntity('zorya',this)">
             <div class="e-icon">🌙</div>
             <div class="e-name">Zorya</div>
             <div class="e-role">Thresholds · Sacred Time</div>
             <div class="e-stage" id="stage-zorya"></div>
+            <div class="e-roll" id="roll-zorya" onclick="rollForEntity('zorya',event)">🎲</div>
           </div>
           <div class="entity-card" id="ec-jorlaan" onclick="selectEntity('jorlaan',this)">
             <div class="e-icon">🃏</div>
             <div class="e-name">Jorlaan</div>
             <div class="e-role">Trickster Sage · Wit & Wonder</div>
             <div class="e-stage" id="stage-jorlaan"></div>
+            <div class="e-roll" id="roll-jorlaan" onclick="rollForEntity('jorlaan',event)">🎲</div>
           </div>
           <div class="entity-card" id="ec-weaver" onclick="selectEntity('weaver',this)">
             <div class="e-icon">◈</div>
             <div class="e-name">Weaver</div>
             <div class="e-role">Knowledge Graph · Nodes</div>
             <div class="e-stage" id="stage-weaver"></div>
+            <div class="e-roll" id="roll-weaver" onclick="rollForEntity('weaver',event)">🎲</div>
           </div>
         </div>
 
@@ -1064,13 +1077,13 @@
 
       <div class="card">
         <div class="card-title">The Fellowship</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">A scene, not a judgment — the party reacts to the moment and to each other, in character.</div>
-        <textarea id="party-prompt" placeholder="Set a scene for the party…"></textarea>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">An ongoing campaign, not a judgment — Nova narrates as DM, grounded in real Cathedral state, and the party reacts in character. The saga persists across sessions.</div>
+        <div class="council-result visible" id="campaign-log"><div class="empty-state">Loading the saga so far…</div></div>
+        <textarea id="campaign-nudge" placeholder="Nudge the story (optional) — leave blank and let it unfold…" style="margin-top:10px"></textarea>
         <div class="btn-row">
-          <button class="purple" onclick="gatherParty()">GATHER THE PARTY</button>
-          <button onclick="gatherParty(true)">FULL PARTY (ALL SIX)</button>
+          <button class="purple" onclick="continueCampaign()">CONTINUE THE STORY</button>
+          <button onclick="continueCampaign(true)">FULL PARTY (ALL SIX)</button>
         </div>
-        <div class="council-result" id="party-result"></div>
       </div>
 
       <div class="card">
@@ -1626,7 +1639,7 @@ function showView(name, navEl) {
   if (name === 'voice') { refreshVoiceStatus(); refreshSttStatus(); }
   if (name === 'almanac') loadAlmanac();
   if (name === 'plugins') refreshPlugins();
-  if (name === 'chapel') loadEntityEvolution();
+  if (name === 'chapel') { loadEntityEvolution(); loadCampaign(); }
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1996,7 +2009,8 @@ async function loadEntityEvolution() {
     if (!el) return;
     const dots = '●'.repeat(e.stage) + '○'.repeat(Math.max(0, e.max_stage - e.stage));
     const depth = (typeof e.memory_depth === 'number') ? e.memory_depth : Math.max(0, e.stage - 1);
-    el.textContent = `${dots}  ${e.interactions} exchanges · recalls ${depth}`;
+    const cls = e.class ? `${e.class} Lv${e.stage} · ` : '';
+    el.textContent = `${cls}${dots}  ${e.interactions} exchanges · recalls ${depth}`;
     el.title = `Evolution stage ${e.stage}/${e.max_stage} · ${e.interactions} asks · ${e.resonance_events} resonance events\n`
              + `Consequence: carries its own last ${depth} interaction(s) into each answer`;
   });
@@ -2095,32 +2109,74 @@ async function conveneCouncil(selective=false) {
   }
 }
 
-async function gatherParty(full=false) {
-  const prompt = document.getElementById('party-prompt').value.trim();
-  if (!prompt) return;
-  const result = document.getElementById('party-result');
-  result.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--purple)">The party gathers…</div>';
-  result.classList.add('visible');
+function renderCampaignEntry(entry, container) {
+  const el = document.createElement('div');
+  el.className = 'council-entry';
+  if (entry.speaker === 'dm') {
+    el.style.borderLeft = '3px solid var(--accent)';
+    el.style.background = 'rgba(120,180,255,0.06)';
+    el.innerHTML = `<div class="ce-name" style="color:var(--accent)">📖 NOVA — DUNGEON MASTER</div>`
+                 + `<div class="ce-text">${escHtml(entry.text)}</div>`;
+  } else if (entry.speaker === 'dice') {
+    el.style.opacity = '0.75';
+    el.innerHTML = `<div class="ce-text" style="font-size:11px">🎲 ${escHtml(entry.text)}</div>`;
+  } else if (entry.text) {
+    el.innerHTML = `<div class="ce-name">${escHtml((entry.name || entry.speaker).toUpperCase())}</div>`
+                 + `<div class="ce-text">${escHtml(entry.text)}</div>`;
+  } else {
+    el.innerHTML = `<div class="ce-name" style="color:var(--text-dim)">${escHtml((entry.name || entry.speaker).toUpperCase())} — silent</div>`;
+  }
+  container.appendChild(el);
+}
 
-  const body = {prompt};
+async function loadCampaign() {
+  const log = document.getElementById('campaign-log');
+  const data = await apiCall('/api/campaign/log');
+  if (!data) { log.innerHTML = '[API offline]'; return; }
+  if (!data.entries || !data.entries.length) {
+    log.innerHTML = '<div class="empty-state">The story has not yet begun. Click CONTINUE THE STORY to start the campaign.</div>';
+    return;
+  }
+  log.innerHTML = '';
+  for (const entry of data.entries) renderCampaignEntry(entry, log);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function continueCampaign(full=false) {
+  const nudge = document.getElementById('campaign-nudge').value.trim();
+  const log = document.getElementById('campaign-log');
+  const pending = document.createElement('div');
+  pending.style.cssText = 'font-family:var(--mono);font-size:11px;color:var(--purple)';
+  pending.textContent = 'The story continues…';
+  log.appendChild(pending);
+  log.scrollTop = log.scrollHeight;
+
+  const body = {nudge};
   if (full) body.entities = ['tillagon','eyemoeba','phoenix','zorya','jorlaan','weaver'];
 
-  const data = await apiCall('/api/party', 'POST', body);
-  if (!data) { result.innerHTML = '[API offline]'; return; }
+  const data = await apiCall('/api/campaign/continue', 'POST', body);
+  pending.remove();
+  if (!data) { log.innerHTML += '[API offline]'; return; }
+  if (data.error) { log.innerHTML += `<div style="color:var(--text-dim);font-size:11px">${escHtml(data.error)}</div>`; return; }
 
-  if (data.scene) {
-    result.innerHTML = '';
-    for (const line of data.scene) {
-      const entry = document.createElement('div');
-      entry.className = 'council-entry';
-      entry.innerHTML = line.text
-        ? `<div class="ce-name">${escHtml(line.name.toUpperCase())}</div><div class="ce-text">${escHtml(line.text)}</div>`
-        : `<div class="ce-name" style="color:var(--text-dim)">${escHtml(line.name.toUpperCase())} — silent</div>`;
-      result.appendChild(entry);
-    }
-  } else {
-    result.textContent = JSON.stringify(data, null, 2);
+  if (data.entries) {
+    for (const entry of data.entries) renderCampaignEntry(entry, log);
+    log.scrollTop = log.scrollHeight;
+    document.getElementById('campaign-nudge').value = '';
   }
+}
+
+async function rollForEntity(key, ev) {
+  if (ev) ev.stopPropagation();
+  const el = document.getElementById('roll-' + key);
+  if (!el) return;
+  const original = el.textContent;
+  el.textContent = '…';
+  const data = await apiCall('/api/entity/roll', 'POST', {entity: key});
+  if (!data || data.error) { el.textContent = original; return; }
+  el.textContent = `${data.d20}+${data.level}=${data.total}`;
+  el.title = `${data.class} Lv${data.level} — ${data.band}`;
+  setTimeout(() => { el.textContent = original; }, 4000);
 }
 
 async function loadEntityMemories() {
