@@ -104,6 +104,7 @@ Nova-Cathedral/
 `phoenix_history`, `zorya_cycles`, `entity_evolution`,
 `agent_ask`, `council_ask`, `party_ask`, `entity_list`, `entity_memories`,
 `campaign_continue`, `campaign_log`, `roll_check`,
+`character_create`, `character_list`, `character_roll`,
 `weaver_relabel`, `trait_state`, `graph_health`, `weave_orphans`,
 `cathedral_vitals`, `self_report`, `weaver_state`, `jorlaan_serendipity`
 

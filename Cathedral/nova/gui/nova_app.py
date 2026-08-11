@@ -418,14 +418,15 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return {"scene": [{"entity": "party", "name": "The Party", "text": reply}]}
 
         if path == "/api/campaign/continue" and method == "POST":
-            nudge    = bd.get("nudge", "")
-            entities = bd.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            nudge        = bd.get("nudge", "")
+            entities     = bd.get("entities", ["tillagon", "eyemoeba", "phoenix"])
+            character_id = bd.get("character_id")
             # DM narration call + one sequential call per entity, all under the
             # daemon's single Ollama lock — same scaling as /api/party, plus a
             # flat 90s for the narration pass.
             campaign_timeout = 90.0 + 130.0 * max(1, len(entities))
             result = _daemon_call("campaign_continue", timeout=campaign_timeout,
-                                  nudge=nudge, entities=entities)
+                                  nudge=nudge, entities=entities, character_id=character_id)
             if result and "entries" in result:
                 return result
             return {"error": "campaign continue failed"}
@@ -437,6 +438,21 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/entity/roll" and method == "POST":
             entity = bd.get("entity", "")
             result = _daemon_call("roll_check", timeout=5.0, entity=entity)
+            return result if result else {"error": "roll failed"}
+
+        if path == "/api/character/create" and method == "POST":
+            result = _daemon_call("character_create", timeout=5.0,
+                                  name=bd.get("name", ""), **{"class": bd.get("class", "")},
+                                  player=bd.get("player", ""))
+            return result if result else {"error": "create failed"}
+
+        if path == "/api/character/list":
+            result = _daemon_call("character_list", timeout=5.0)
+            return result if result else {"characters": []}
+
+        if path == "/api/character/roll" and method == "POST":
+            result = _daemon_call("character_roll", timeout=5.0,
+                                  character_id=bd.get("character_id"))
             return result if result else {"error": "roll failed"}
 
         if path == "/api/entity/list":
@@ -933,9 +949,24 @@ def main():
         daemon_threads = True
 
     socketserver.TCPServer.allow_reuse_address = True
-    srv = ThreadedBridgeServer(("127.0.0.1", GUI_PORT), BridgeHandler)
+    # Bound to all interfaces (not just 127.0.0.1) so friends on the same
+    # network can reach the campaign from their own devices. This exposes the
+    # curated /api/* routes (chat, campaign, entities, goals, memories, ...)
+    # to anyone on the LAN with no authentication — the daemon's genuinely
+    # dangerous commands (shell, pip_install, raw file access) are NOT among
+    # them, but there is no login here, by design, per Chazel's explicit
+    # choice to keep this LAN-only rather than internet-exposed.
+    srv = ThreadedBridgeServer(("0.0.0.0", GUI_PORT), BridgeHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("Nova bridge  http://localhost:%d", GUI_PORT)
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))  # no packet actually sent, just picks the local route
+        lan_ip = s.getsockname()[0]
+        s.close()
+        log.info("Nova bridge  (LAN) http://%s:%d", lan_ip, GUI_PORT)
+    except Exception:
+        pass
 
     url = f"http://localhost:{GUI_PORT}/"
     GLib.timeout_add(600, lambda: (NovaCathedralWindow(url, srv), False)[1])

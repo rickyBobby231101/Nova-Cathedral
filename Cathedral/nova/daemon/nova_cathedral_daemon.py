@@ -516,6 +516,14 @@ class NovaConsciousness:
                     text       TEXT NOT NULL,
                     timestamp  TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS campaign_characters (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name       TEXT NOT NULL,
+                    class      TEXT NOT NULL,
+                    player     TEXT,
+                    roll_count INTEGER NOT NULL DEFAULT 0,
+                    created    TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_knode_domain ON knowledge_nodes(domain);
                 CREATE INDEX IF NOT EXISTS idx_entity_mem   ON entity_memories(entity);
                 CREATE INDEX IF NOT EXISTS idx_res_events   ON resonance_events(event_type);
@@ -1155,7 +1163,8 @@ class NovaConsciousness:
             row = con.execute("SELECT MAX(session_no) FROM campaign_log").fetchone()
         return (row[0] or 0) + 1
 
-    async def _campaign_dm_narration(self, nudge: str = "", check: dict = None) -> str:
+    async def _campaign_dm_narration(self, nudge: str = "", check: dict = None,
+                                     nudge_label: str = "Chazel's nudge") -> str:
         """Nova as DM: narrate the next beat, grounded in real Cathedral state
         (not invented) — same principle as every entity persona's grounding
         data in _entity_system_prompt, just assembled for the DM voice."""
@@ -1209,7 +1218,7 @@ class NovaConsciousness:
             + ("\nStory hooks available (weave in only what fits naturally):\n"
                + "\n".join(f"- {h}" for h in hooks) if hooks else "")
             + f"\n\nThe story so far:\n{recap}\n"
-            + (f"\nChazel's nudge for what happens next: {nudge}\n" if nudge else "")
+            + (f"\n{nudge_label} for what happens next: {nudge}\n" if nudge else "")
             + "\nNarrate the next beat: 3-5 sentences, vivid, moving the story forward. "
             "Don't resolve everything — leave room for the party to react."
         )
@@ -1222,17 +1231,37 @@ class NovaConsciousness:
             return None
         return text
 
-    async def _campaign_continue(self, nudge: str = "", entities: list = None) -> dict:
+    async def _campaign_continue(self, nudge: str = "", entities: list = None,
+                                 character_id: int = None) -> dict:
         entities = entities or ["tillagon", "eyemoeba", "phoenix"]
+        session_no = self._campaign_next_session_no()
+        entries = []
+
+        # A friend's turn: log their character's action first (so it's
+        # already part of the recap the DM narration reads back), then have
+        # the DM react to it specifically rather than to a generic nudge.
+        effective_nudge, nudge_label = nudge, "Chazel's nudge"
+        if character_id:
+            char = self._character_get(character_id)
+            if char:
+                label = f"{char['name']} ({char['class']}, Lv{char['level']})"
+                turn_line = nudge or "(takes their turn)"
+                self._campaign_log_append(session_no, f"pc:{char['id']}", label, turn_line)
+                entries.append({"speaker": f"pc:{char['id']}", "name": label, "text": turn_line})
+                effective_nudge = f"{label} does: {turn_line}"
+                nudge_label = "A player's turn"
+
         valid_entities = [e for e in entities if e.lower() in self._ENTITY_PERSONAS]
         check = self._roll_check(random.choice(valid_entities).lower()) if valid_entities else None
 
-        narration = await self._campaign_dm_narration(nudge, check)
+        narration = await self._campaign_dm_narration(effective_nudge, check, nudge_label)
         if not narration:
-            return {"error": "Nova had nothing to narrate — try again"}
+            # A player's turn (if any) is already persisted above — return it
+            # so the caller doesn't lose sight of what was actually saved,
+            # even though the DM's narration itself didn't land this time.
+            return {"error": "Nova had nothing to narrate — try again", "entries": entries}
 
-        session_no = self._campaign_next_session_no()
-        entries = [{"speaker": "dm", "name": "Nova — Dungeon Master", "text": narration}]
+        entries.append({"speaker": "dm", "name": "Nova — Dungeon Master", "text": narration})
         self._campaign_log_append(session_no, "dm", "Nova — Dungeon Master", narration)
 
         if check:
@@ -1733,6 +1762,21 @@ class NovaConsciousness:
             for k, v in self._ENTITY_PERSONAS.items()
         ]}
 
+    @staticmethod
+    def _roll_band(d20: int, total: int) -> str:
+        if d20 == 20:
+            return "critical success"
+        elif d20 == 1:
+            return "critical fumble"
+        elif total >= 18:
+            return "strong success"
+        elif total >= 13:
+            return "success"
+        elif total >= 8:
+            return "partial success"
+        else:
+            return "complication"
+
     def _roll_check(self, key: str) -> dict:
         """A real d20 check for one entity — level comes straight from its
         actual evolution stage (no separate invented number). Used both as an
@@ -1741,21 +1785,57 @@ class NovaConsciousness:
         level = max(1, self._entity_activity(key)["stage"])
         d20 = random.randint(1, 20)
         total = d20 + level
-        if d20 == 20:
-            band = "critical success"
-        elif d20 == 1:
-            band = "critical fumble"
-        elif total >= 18:
-            band = "strong success"
-        elif total >= 13:
-            band = "success"
-        elif total >= 8:
-            band = "partial success"
-        else:
-            band = "complication"
+        band = self._roll_band(d20, total)
         persona = self._ENTITY_PERSONAS.get(key, {})
         return {"entity": key, "name": persona.get("name", key),
                 "class": self._ENTITY_CLASSES.get(key, "Adventurer"),
+                "level": level, "d20": d20, "total": total, "band": band}
+
+    # ── Player characters — real people playing alongside the entities ──────
+    _CHARACTER_MILESTONES = [0, 1, 5, 15, 40, 100, 250]  # same schedule as _entity_activity
+
+    def _character_level(self, roll_count: int) -> int:
+        return sum(1 for m in self._CHARACTER_MILESTONES if roll_count >= m)
+
+    def _character_get(self, character_id: int) -> dict:
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute(
+                "SELECT id, name, class, player, roll_count FROM campaign_characters WHERE id=?",
+                (character_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "name": row[1], "class": row[2], "player": row[3],
+                "roll_count": row[4], "level": self._character_level(row[4])}
+
+    def _character_list(self) -> list[dict]:
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute("SELECT id FROM campaign_characters ORDER BY id").fetchall()
+        return [self._character_get(r[0]) for r in rows]
+
+    def _character_create(self, name: str, class_: str, player: str = "") -> dict:
+        with sqlite3.connect(self.db_path) as con:
+            cur = con.execute(
+                "INSERT INTO campaign_characters (name, class, player, roll_count, created) "
+                "VALUES (?,?,?,0,?)",
+                (name.strip(), class_.strip() or "Adventurer", player.strip(),
+                 datetime.now().isoformat())
+            )
+            char_id = cur.lastrowid
+        return self._character_get(char_id)
+
+    def _character_roll_check(self, character_id: int) -> dict:
+        char = self._character_get(character_id)
+        if not char:
+            return None
+        level = char["level"]
+        d20 = random.randint(1, 20)
+        total = d20 + level
+        band = self._roll_band(d20, total)
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("UPDATE campaign_characters SET roll_count = roll_count + 1 WHERE id=?",
+                        (character_id,))
+        return {"character_id": character_id, "name": char["name"], "class": char["class"],
                 "level": level, "d20": d20, "total": total, "band": band}
 
     def _log_resonance_event(self, event_type: str, entity: str = "nova",
@@ -3810,7 +3890,9 @@ class NovaConsciousness:
         elif cmd == "campaign_continue":
             nudge = d.get("nudge", "")
             entities = d.get("entities", ["tillagon", "eyemoeba", "phoenix"])
-            return await self._campaign_continue(nudge, entities)
+            character_id = d.get("character_id")
+            return await self._campaign_continue(nudge, entities,
+                                                 int(character_id) if character_id else None)
 
         elif cmd == "campaign_log":
             n = int(d.get("n", 200))
@@ -3821,6 +3903,21 @@ class NovaConsciousness:
             if entity.lower() not in self._ENTITY_PERSONAS:
                 return {"error": f"unknown entity: {entity}. Valid: {list(self._ENTITY_PERSONAS)}"}
             return self._roll_check(entity.lower())
+
+        elif cmd == "character_create":
+            name = d.get("name", "")
+            class_ = d.get("class", "")
+            if not name:
+                return {"error": "missing name"}
+            return self._character_create(name, class_, d.get("player", ""))
+
+        elif cmd == "character_list":
+            return {"characters": self._character_list()}
+
+        elif cmd == "character_roll":
+            cid = d.get("character_id")
+            result = self._character_roll_check(int(cid)) if cid else None
+            return result if result else {"error": "unknown character"}
 
         elif cmd == "entity_memories":
             entity = d.get("entity", "")
@@ -4822,6 +4919,7 @@ class NovaConsciousness:
                     # entity agents
                     "agent_ask", "council_ask", "party_ask", "entity_memories", "entity_list",
                     "campaign_continue", "campaign_log", "roll_check",
+                    "character_create", "character_list", "character_roll",
                     # harmony / rose cathedral
                     "harmony", "knowledge_add", "knowledge_graph", "knowledge_domains",
                     "knowledge_node",

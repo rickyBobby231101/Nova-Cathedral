@@ -1079,7 +1079,27 @@
         <div class="card-title">The Fellowship</div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">An ongoing campaign, not a judgment — Nova narrates as DM, grounded in real Cathedral state, and the party reacts in character. The saga persists across sessions.</div>
         <div class="council-result visible" id="campaign-log"><div class="empty-state">Loading the saga so far…</div></div>
-        <textarea id="campaign-nudge" placeholder="Nudge the story (optional) — leave blank and let it unfold…" style="margin-top:10px"></textarea>
+
+        <div id="players-panel" style="margin-top:10px">
+          <div class="e-label">PLAYERS</div>
+          <div id="players-roster" style="font-size:12px;line-height:1.8">
+            <span style="color:var(--text-dim)">No characters yet — create one below to play.</span>
+          </div>
+          <div class="btn-row" style="margin-top:6px">
+            <input type="text" id="new-char-name" placeholder="Character name" style="flex:1">
+            <select id="new-char-class">
+              <option>Paladin</option><option>Wizard (Diviner)</option><option>Cleric</option>
+              <option>Ranger</option><option>Bard (Trickster)</option><option>Artificer</option>
+              <option>Adventurer</option>
+            </select>
+            <button onclick="createCharacter()">+ CHARACTER</button>
+          </div>
+        </div>
+
+        <select id="campaign-speaker" style="margin-top:10px;width:100%">
+          <option value="">Nova (DM only, no character)</option>
+        </select>
+        <textarea id="campaign-nudge" placeholder="Nudge the story (optional) — leave blank and let it unfold…" style="margin-top:6px"></textarea>
         <div class="btn-row">
           <button class="purple" onclick="continueCampaign()">CONTINUE THE STORY</button>
           <button onclick="continueCampaign(true)">FULL PARTY (ALL SIX)</button>
@@ -1639,7 +1659,7 @@ function showView(name, navEl) {
   if (name === 'voice') { refreshVoiceStatus(); refreshSttStatus(); }
   if (name === 'almanac') loadAlmanac();
   if (name === 'plugins') refreshPlugins();
-  if (name === 'chapel') { loadEntityEvolution(); loadCampaign(); }
+  if (name === 'chapel') { loadEntityEvolution(); loadCampaign(); loadCharacters(); }
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -2153,17 +2173,78 @@ async function continueCampaign(full=false) {
 
   const body = {nudge};
   if (full) body.entities = ['tillagon','eyemoeba','phoenix','zorya','jorlaan','weaver'];
+  const speaker = document.getElementById('campaign-speaker').value;
+  if (speaker) body.character_id = speaker;
 
   const data = await apiCall('/api/campaign/continue', 'POST', body);
   pending.remove();
   if (!data) { log.innerHTML += '[API offline]'; return; }
-  if (data.error) { log.innerHTML += `<div style="color:var(--text-dim);font-size:11px">${escHtml(data.error)}</div>`; return; }
+  if (data.error) {
+    // A player's turn may still have been persisted even if the DM's
+    // narration itself failed this time — render it so it isn't lost from
+    // view, then show the error.
+    if (data.entries) for (const entry of data.entries) renderCampaignEntry(entry, log);
+    log.innerHTML += `<div style="color:var(--text-dim);font-size:11px">${escHtml(data.error)}</div>`;
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
 
   if (data.entries) {
     for (const entry of data.entries) renderCampaignEntry(entry, log);
     log.scrollTop = log.scrollHeight;
     document.getElementById('campaign-nudge').value = '';
+    if (speaker) loadCharacters();   // roll_count from any dice this beat may have changed levels
   }
+}
+
+async function loadCharacters() {
+  const roster = document.getElementById('players-roster');
+  const speakerSelect = document.getElementById('campaign-speaker');
+  const data = await apiCall('/api/character/list');
+  const chars = (data && data.characters) || [];
+
+  roster.innerHTML = chars.length
+    ? ''
+    : '<span style="color:var(--text-dim)">No characters yet — create one below to play.</span>';
+  for (const c of chars) {
+    const row = document.createElement('div');
+    row.innerHTML = `<span>${escHtml(c.name)} — ${escHtml(c.class)} Lv${c.level} (${c.roll_count} rolls)</span> `
+                  + `<span class="e-roll" style="display:inline;cursor:pointer" id="charroll-${c.id}" onclick="rollForCharacter(${c.id})">🎲</span>`;
+    roster.appendChild(row);
+  }
+
+  const current = speakerSelect.value;
+  speakerSelect.innerHTML = '<option value="">Nova (DM only, no character)</option>';
+  for (const c of chars) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = `${c.name} (${c.class}, Lv${c.level})`;
+    speakerSelect.appendChild(opt);
+  }
+  if (chars.some(c => String(c.id) === current)) speakerSelect.value = current;
+}
+
+async function createCharacter() {
+  const nameEl = document.getElementById('new-char-name');
+  const name = nameEl.value.trim();
+  if (!name) return;
+  const cls = document.getElementById('new-char-class').value;
+  const data = await apiCall('/api/character/create', 'POST', {name, class: cls});
+  if (!data || data.error) return;
+  nameEl.value = '';
+  loadCharacters();
+}
+
+async function rollForCharacter(id) {
+  const el = document.getElementById('charroll-' + id);
+  if (!el) return;
+  const original = el.textContent;
+  el.textContent = '…';
+  const data = await apiCall('/api/character/roll', 'POST', {character_id: id});
+  if (!data || data.error) { el.textContent = original; return; }
+  el.textContent = `${data.d20}+${data.level}=${data.total}`;
+  el.title = `${data.class} Lv${data.level} — ${data.band}`;
+  setTimeout(() => { loadCharacters(); }, 4000);
 }
 
 async function rollForEntity(key, ev) {
