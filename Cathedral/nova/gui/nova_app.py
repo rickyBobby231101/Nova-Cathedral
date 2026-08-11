@@ -805,6 +805,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type",   "text/html;charset=utf-8")
         self.send_header("Content-Length", len(b))
+        # No caching — this response has no Last-Modified/ETag, so without an
+        # explicit no-store the WebKit2 view's persistent disk cache is free
+        # to keep serving a stale page across restarts (heuristic freshness),
+        # which is exactly what happened here.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(b)
 
@@ -840,7 +845,12 @@ class NovaCathedralWindow(Gtk.Window):
         self.set_default_size(1400, 900)
         self.connect("destroy", self._on_close)
 
-        webview = WebKit2.WebView()
+        # Ephemeral context — no persistent disk cache. This is a local
+        # control panel over live daemon state; a stale cached page silently
+        # surviving a code update/restart (as happened before this) is worse
+        # than the small cost of always fetching fresh.
+        webkit_context = WebKit2.WebContext.new_ephemeral()
+        webview = WebKit2.WebView.new_with_context(webkit_context)
         ws = webview.get_settings()
         ws.set_enable_javascript(True)
         ws.set_enable_developer_extras(True)
