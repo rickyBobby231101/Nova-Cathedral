@@ -767,7 +767,9 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             message = bd.get("message", "")
             if not message:
                 return {"error": "missing message"}
-            result = _daemon_call("claude_bridge_ask", timeout=60.0, message=message)
+            # Has to outlast the bridge's own 120s HTTP timeout, or the GUI gives
+            # up on a slow reply the daemon is still successfully waiting on.
+            result = _daemon_call("claude_bridge_ask", timeout=150.0, message=message)
             return result or {"error": "daemon unreachable"}
 
         # ── storyteller ───────────────────────────────────────────────────────
