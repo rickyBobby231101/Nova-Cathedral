@@ -55,6 +55,10 @@ class Oracle:
                 "You already know — I'm just the mirror catching your whisper."
             ])
 
-# Example usage:
-oracle = Oracle()
-print(oracle.divine("What is my destiny?"))
+# Example usage. Guarded because the daemon does `from oracle_module import
+# Oracle` at startup: unguarded, a self-edit on 2026-08-08 made every import
+# construct an Oracle and print a divination to stdout — which then surfaced
+# in daemon logs, test output, and any script that touched the module.
+if __name__ == "__main__":
+    oracle = Oracle()
+    print(oracle.divine("What is my destiny?"))

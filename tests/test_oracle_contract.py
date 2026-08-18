@@ -33,8 +33,9 @@ def _load_oracle_module():
     `from oracle_module import Oracle`, so resolve the same file directly
     rather than relying on import order elsewhere in the test session.
 
-    Note: the module runs example usage at import time and prints to stdout.
-    That's pre-existing; pytest captures it.
+    Importing is expected to be silent — the example usage at the bottom of
+    the module is guarded by `if __name__ == "__main__"`. See
+    test_importing_the_module_is_silent.
     """
     spec = importlib.util.spec_from_file_location("oracle_module", ORACLE_PY)
     mod = importlib.util.module_from_spec(spec)
@@ -77,6 +78,20 @@ class TestOracleModuleContract:
         answer = _load_oracle_module().Oracle().divine(question)
         assert isinstance(answer, str), f"divine() returned {type(answer).__name__}, not str"
         assert answer.strip()
+
+    def test_importing_the_module_is_silent(self, capsys):
+        """Importing must have no side effects.
+
+        The daemon does `from oracle_module import Oracle` at startup, so
+        anything at module level runs inside the daemon process. The
+        2026-08-08 self-edit left example usage unguarded, which constructed
+        an Oracle and printed a divination on every import — noise in the
+        daemon's logs, in test output, and in any script touching the module.
+        """
+        _load_oracle_module()
+        out = capsys.readouterr()
+        assert out.out == "", f"import printed to stdout: {out.out!r}"
+        assert out.err == "", f"import printed to stderr: {out.err!r}"
 
     def test_divine_takes_a_plain_string(self):
         # The self-edit changed the signature to take a dict. The daemon
