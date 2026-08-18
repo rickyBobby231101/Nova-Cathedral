@@ -101,6 +101,7 @@ Nova-Cathedral/
 `pending_questions`, `answer_question`, `teach`,
 `crypt_status`, `crypt_entries`, `crypt_run`,
 `eyemoeba_motifs`, `eyemoeba_scan`, `eyemoeba_insight`, `eyemoeba_insights`,
+`dream_run`, `dreams`, `dream_status`,
 `phoenix_history`, `zorya_cycles`, `entity_evolution`,
 `agent_ask`, `council_ask`, `party_ask`, `entity_list`, `entity_memories`,
 `campaign_continue`, `campaign_log`, `roll_check`,

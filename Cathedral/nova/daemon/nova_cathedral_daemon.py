@@ -169,6 +169,12 @@ except ImportError:
     _WEAVER_AVAILABLE = False
 
 try:
+    import dream as _dream
+    _DREAM_AVAILABLE = True
+except ImportError:
+    _DREAM_AVAILABLE = False
+
+try:
     import chat_importer as _chat_importer
     _CHAT_IMPORTER_AVAILABLE = True
 except ImportError:
@@ -252,6 +258,14 @@ class NovaConsciousness:
         # which the evolution + reflection loops also compete for.
         self._eyemoeba_cycle_count    = 0
         self._eyemoeba_insight_every  = 6
+
+        # The Dream loop — every Nth cycle, let neuronode continue a real
+        # motif's evidence and fold the result back in as a node. Rarer than
+        # insight (12 cycles ≈ every hour) for two reasons: a sample pins a
+        # core for most of a minute on a 4-core box that Ollama also needs,
+        # and dreams should be occasional by nature. Costs nothing when
+        # neuronode isn't installed — the loop simply skips.
+        self._dream_every = 12
 
         # Evolution log dedup — only snapshot when traits actually change
         self._last_logged_traits = None
@@ -1592,6 +1606,110 @@ class NovaConsciousness:
             "insight":  insight,
             "node_id":  node_id,
         }
+
+    # ── The Dream loop — neuronode continues the graph's own sentences ─────
+    # Eyemoeba finds a motif; the nodes carrying it are handed to neuronode as
+    # a seed; what it writes back becomes a node of its own, which Eyemoeba
+    # then reads on its next scan like any other. Nothing extra is needed to
+    # close that circuit — `_eyemoeba_analyze` already scans every row of
+    # knowledge_nodes, so a stored dream is mined automatically.
+    #
+    # Measured before building (against a copy of the live graph): adding 20
+    # dream nodes moved the motif count by +2, because with 74 domains and
+    # ~2,900 motifs almost every term already spans two domains. So dreams
+    # cannot manufacture false cross-domain patterns at any realistic rate,
+    # and no filtering of the 'dream' domain is needed in the analyzer.
+
+    def _dream_seed(self, term: str) -> dict:
+        """Build the seed text for a dream from the motif's real evidence."""
+        evidence = self._eyemoeba_motif_evidence(term)
+        if not evidence:
+            return {}
+        snippets = [n["snippet"]
+                    for nodes in evidence["by_domain"].values()
+                    for n in nodes]
+        evidence["seed"] = _dream.seed_from_evidence(snippets, term)
+        return evidence
+
+    def dreams_list(self, n: int = 20) -> list[dict]:
+        """The dreams neuronode has written, newest first."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            rows = con.execute(
+                "SELECT id, label, content, created FROM knowledge_nodes "
+                "WHERE domain='dream' AND source='neuronode' "
+                "ORDER BY created DESC LIMIT ?", (n,)
+            ).fetchall()
+        return [{"id": r[0], "label": r[1], "dream": r[2], "created": r[3][:19]}
+                for r in rows]
+
+    def dream_status(self) -> dict:
+        """Whether the Dream loop can run, and what it has produced."""
+        if not _DREAM_AVAILABLE:
+            return {"available": False,
+                    "reason": "dream module not importable"}
+        state = dict(_dream.available())
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            state["dreams"] = con.execute(
+                "SELECT COUNT(*) FROM knowledge_nodes "
+                "WHERE domain='dream' AND source='neuronode'"
+            ).fetchone()[0]
+        state["every_cycles"] = self._dream_every
+        return state
+
+    async def eyemoeba_dream(self, term: str = "", store: bool = True) -> dict:
+        """Let neuronode continue what the graph already says about a motif.
+
+        Unlike `eyemoeba_insight`, nothing here is asked or reasoned — the
+        model only continues text. The value is not the prose (this checkpoint
+        is heavily overfit and its output is rough) but that the continuation
+        is drawn from the Cathedral's own vocabulary and lands back in the
+        graph as connectable material.
+
+        Returns an error rather than storing anything when the sample is
+        memorised scaffolding or a refusal, which is a common outcome.
+        """
+        if not _DREAM_AVAILABLE:
+            return {"error": "dream module not available"}
+        state = _dream.available()
+        if not state["available"]:
+            return {"error": state["reason"]}
+
+        term = (term or "").strip().lower()
+        if not term:
+            term = await asyncio.to_thread(self._top_unexplained_motif)
+            if not term:
+                return {"error": "no cross-domain motif to dream on"}
+
+        evidence = await asyncio.to_thread(self._dream_seed, term)
+        if not evidence:
+            return {"error": f"no stored motif '{term}' — run eyemoeba_scan first"}
+
+        # Blocking and CPU-bound for roughly a minute per attempt, so it goes
+        # to a thread; the event loop keeps serving the socket meanwhile.
+        result = await asyncio.to_thread(
+            _dream.dream, evidence["seed"], 3)
+        if "error" in result:
+            return {"error": result["error"], "term": term}
+
+        text = result["text"]
+        node_id = None
+        if store:
+            label = f"Dream: {term} ({', '.join(evidence['domains'][:2])})"
+            node_id = await asyncio.to_thread(
+                self._knowledge_add, "dream", label[:80], text, "neuronode")
+            # Tie the dream to the evidence that seeded it, so it enters the
+            # graph connected rather than as an orphan the healer must adopt.
+            def _weave():
+                for src in evidence.get("sample_ids", [])[:6]:
+                    self._knowledge_connect(node_id, src, 0.4, 0.5)
+            await asyncio.to_thread(_weave)
+            self._log_resonance_event(
+                "dream_woven", entity="eyemoeba", delta=0.01,
+                description=f"neuronode dreamt on '{term}'")
+
+        return {"term": term, "domains": evidence["domains"],
+                "dream": text, "attempts": result.get("attempts"),
+                "node_id": node_id}
 
     # ── Phoenix — real continuity/restoration awareness ────────────────────
     # Reads the self-build log: Phoenix guards continuity, so her real
@@ -4860,6 +4978,17 @@ class NovaConsciousness:
         elif cmd == "eyemoeba_insights":
             return {"insights": self.eyemoeba_insights_list(n=int(d.get("n", 20)))}
 
+        # ── the dream loop (neuronode continues the graph's own text) ─────────
+        elif cmd == "dream_run":
+            return await self.eyemoeba_dream(
+                term=d.get("term", ""), store=d.get("store", True))
+
+        elif cmd == "dreams":
+            return {"dreams": self.dreams_list(n=int(d.get("n", 20)))}
+
+        elif cmd == "dream_status":
+            return self.dream_status()
+
         # ── the crypt (compressed memory archive) ───────────────────────────────
         elif cmd == "crypt_status":
             return self.crypt_status()
@@ -4910,6 +5039,8 @@ class NovaConsciousness:
                     "crypt_status", "crypt_entries", "crypt_run",
                     # eyemoeba pattern analysis
                     "eyemoeba_motifs", "eyemoeba_scan", "eyemoeba_insight",
+                    # the dream loop
+                    "dream_run", "dreams", "dream_status",
                     # entity backing + evolution
                     "phoenix_history", "zorya_cycles", "entity_evolution",
                     # weaver
@@ -5173,6 +5304,19 @@ class NovaConsciousness:
                                          f"(node {res.get('node_id')})")
                         else:
                             logging.debug(f"Eyemoeba auto-insight skipped: {res['error']}")
+
+                # Every Nth cycle, let neuronode dream on a motif — the
+                # Cathedral continuing its own sentences back into the graph.
+                # Silent when neuronode isn't installed or the sample was
+                # scaffolding; both are ordinary, not failures worth a warning.
+                if (self._dream_every
+                        and self._eyemoeba_cycle_count % self._dream_every == 0):
+                    res = await self.eyemoeba_dream()
+                    if "error" not in res:
+                        logging.info(f"Eyemoeba dreamt on '{res['term']}' "
+                                     f"(node {res.get('node_id')})")
+                    else:
+                        logging.debug(f"Dream skipped: {res['error']}")
 
                 # Keep the graph coherent as new nodes accrue — heal orphans
                 # every 4th cycle (~20 min) so autonomous research doesn't

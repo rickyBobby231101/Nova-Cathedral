@@ -1058,10 +1058,16 @@
             DETECTED PATTERNS — real cross-domain analysis
             <button onclick="eyemoebaScan()" style="margin-left:auto;font-size:10px;padding:2px 8px">SCAN NOW</button>
           </div>
-          <div style="font-size:10px;color:var(--text-dim);margin:2px 0 4px">Click a pattern to have Eyemoeba explain what it means.</div>
+          <div style="font-size:10px;color:var(--text-dim);margin:2px 0 4px">Click a pattern to have Eyemoeba explain what it means · 💤 to let neuronode dream on it.</div>
           <div id="eyemoeba-motifs-list" style="font-size:12px;line-height:1.7"></div>
           <div class="e-label" style="margin-top:14px">SYNTHESIZED INSIGHTS — what the patterns mean (auto-generated every ~30 min, or on click)</div>
           <div id="eyemoeba-insights-list" style="font-size:12px;line-height:1.6"></div>
+          <div class="e-label" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+            DREAMS — neuronode continues the graph's own sentences
+            <button onclick="eyemoebaDream()" style="margin-left:auto;font-size:10px;padding:2px 8px">DREAM NOW</button>
+          </div>
+          <div id="eyemoeba-dream-status" style="font-size:10px;color:var(--text-dim);margin:2px 0 4px"></div>
+          <div id="eyemoeba-dreams-list" style="font-size:12px;line-height:1.6"></div>
         </div>
       </div>
 
@@ -1538,6 +1544,24 @@
         </div>
         <div class="query-result" id="nn-sample-out"></div>
       </div>
+      <!-- The same checkpoint, doing something the graph keeps. Sampling here
+           is throwaway; the Dream loop seeds it from a real motif's evidence
+           and folds what survives back into the knowledge graph. -->
+      <div class="card">
+        <div class="card-title">In the Dream loop
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)" id="nn-dream-count">—</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);line-height:1.6">
+          Every ~1 hour Eyemoeba seeds this checkpoint with real sentences from the
+          nodes carrying a cross-domain motif, and whatever survives the filter is
+          woven back into the graph as a <strong>dream</strong> node — which the next
+          motif scan then reads like any other. Most samples are rejected as
+          memorised scaffolding; that is the filter working.
+        </div>
+        <div class="btn-row" style="margin-top:10px">
+          <button onclick="openDreamsInChapel()">OPEN IN EYEMOEBA'S CHAPEL</button>
+        </div>
+      </div>
     </div>
 
   </main>
@@ -2002,6 +2026,7 @@ function selectEntity(key, cardEl) {
     panel.style.display = 'block';
     loadEyemoebaMotifs();
     loadEyemoebaInsights();
+    loadEyemoebaDreams();
   } else {
     panel.style.display = 'none';
   }
@@ -2049,8 +2074,53 @@ async function loadEyemoebaMotifs() {
     `style="cursor:pointer" title="Click: have Eyemoeba explain this pattern">` +
     `◎ <strong>${escHtml(m.term)}</strong>` +
     ` <span style="color:var(--text-dim)">spans ${m.domains.map(escHtml).join(' · ')}` +
-    ` (${m.node_count} nodes)</span></div>`
+    ` (${m.node_count} nodes)</span>` +
+    ` <span onclick="eyemoebaDream('${escHtml(m.term)}',event)" style="cursor:pointer"` +
+    ` title="Let neuronode dream on this pattern (~1-2 min)">💤</span></div>`
   ).join('');
+}
+
+// The Dream loop. Deliberately honest in its wording: this checkpoint is
+// heavily overfit and most samples are rejected as memorised scaffolding, so
+// the panel says so rather than looking broken when nothing is stored.
+async function loadEyemoebaDreams() {
+  const list = document.getElementById('eyemoeba-dreams-list');
+  const status = document.getElementById('eyemoeba-dream-status');
+  const st = await apiCall('/api/eyemoeba/dream/status');
+  if (st && st.available === false) {
+    status.textContent = 'neuronode unavailable — ' + (st.reason || 'not installed');
+  } else if (st) {
+    status.textContent = `neuronode ready · ${st.dreams || 0} dream(s) woven into the graph · auto every ~${(st.every_cycles || 12) * 5} min`;
+  }
+  const data = await apiCall('/api/eyemoeba/dreams');
+  if (!data || !data.dreams || data.dreams.length === 0) {
+    list.innerHTML = '<span style="color:var(--text-dim)">No dreams yet — most samples are rejected as memorised scaffolding, which is the filter working.</span>';
+    return;
+  }
+  list.innerHTML = data.dreams.map(d =>
+    `<div style="margin:8px 0;padding:8px;border-left:2px solid var(--accent);opacity:.92">` +
+    `<div style="color:var(--accent);font-size:11px;margin-bottom:3px">💤 ${escHtml(d.label)}</div>` +
+    `<div style="font-style:italic">${escHtml(d.dream)}</div></div>`
+  ).join('');
+}
+
+// Jump from the Neuronode tab to where the dreams actually live, so the two
+// surfaces for one checkpoint aren't strangers to each other.
+function openDreamsInChapel() {
+  showView('chapel', document.querySelector(".nav-item[onclick*=\"'chapel'\"]"));
+  selectEntity('eyemoeba', document.getElementById('ec-eyemoeba'));
+}
+
+async function eyemoebaDream(term, event) {
+  if (event) event.stopPropagation();
+  const list = document.getElementById('eyemoeba-dreams-list');
+  list.innerHTML = `<span style="color:var(--text-dim)">neuronode is dreaming${term ? " on '" + escHtml(term) + "'" : ''}… (up to 3 samples, ~1-2 min)</span>`;
+  const r = await apiCall('/api/eyemoeba/dream', 'POST', {term: term || ''});
+  if (r && r.dream) {
+    await loadEyemoebaDreams();
+  } else {
+    list.innerHTML = `<span style="color:var(--text-dim)">${escHtml((r||{}).error||'dream failed')}</span>`;
+  }
 }
 
 async function eyemoebaScan() {
@@ -2944,6 +3014,14 @@ function tellStory() {
 
 // ── Neuronode ─────────────────────────────────────────────────────────────────
 function loadNeuronodeStatus() {
+  // How much of this checkpoint's output the graph actually kept.
+  apiCall('/api/eyemoeba/dream/status').then(st => {
+    const el = document.getElementById('nn-dream-count');
+    if (!el) return;
+    el.textContent = (st && st.available === false)
+      ? (st.reason || 'unavailable')
+      : `${(st && st.dreams) || 0} dream(s) woven`;
+  });
   apiCall('/api/neuronode/status').then(data => {
     if (!data) return;
     const t = data.training || {};

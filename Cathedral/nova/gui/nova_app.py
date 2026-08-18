@@ -516,6 +516,22 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("eyemoeba_insight", timeout=150.0, term=term)
             return result or {"error": "daemon unreachable"}
 
+        # ── the dream loop (neuronode continues the graph's own text) ───────────
+        if path == "/api/eyemoeba/dreams":
+            result = _daemon_call("dreams", timeout=5.0, n=20)
+            return result or {"dreams": []}
+
+        if path == "/api/eyemoeba/dream/status":
+            result = _daemon_call("dream_status", timeout=5.0)
+            return result or {"available": False, "reason": "daemon unreachable"}
+
+        if path == "/api/eyemoeba/dream" and method == "POST":
+            # Up to three ~40s samples on CPU, so this needs more headroom
+            # than any other button in the Chapel.
+            result = _daemon_call("dream_run", timeout=300.0,
+                                  term=bd.get("term", ""))
+            return result or {"error": "daemon unreachable"}
+
         # ── weaver: clean up node labels in a domain ────────────────────────────
         if path == "/api/weaver/relabel" and method == "POST":
             domain = bd.get("domain", "")
