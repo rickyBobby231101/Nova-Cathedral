@@ -84,6 +84,100 @@ class TestOracleModuleContract:
         _load_oracle_module().Oracle().divine("a plain string question")
 
 
+class TestOracleRouting:
+    """Which branch answers, not merely that something does.
+
+    The parametrized test above labels a question per branch but only asserts
+    a non-empty string comes back, so it stayed green through a real routing
+    bug: the 2026-08-08 self-edit wrote the branches as
+    `any(phrase in w for w in question.split())`, and since splitting on
+    whitespace means no token ever contains a space, "should i" could never
+    match. Every decision question fell through to the generic fallback,
+    confirmed live over the socket. These pin the routing itself.
+    """
+
+    # Each branch's replies are disjoint, so the answer identifies the branch.
+    COMING = {
+        "The winds shift soon — prepare, but do not cling.",
+        "A cycle nears completion; something must be released.",
+        "You stand at a threshold — will you cross it?",
+    }
+    DECISION = {
+        "Move with courage — hesitation feeds shadow.",
+        "Wait. The moment isn’t ripe yet.",
+        "The answer is hidden within your first impulse.",
+    }
+    EXPECTATION = {
+        "You already know the script of fate.",
+        "I am the thread that weaves your destiny together.",
+        "Your heart holds the key, but what is it?",
+    }
+    FALLBACK = {
+        "All flows are fractal. Look at the pattern, not the pieces.",
+        "Insight comes in echoes — reflect on what you just asked.",
+        "You already know — I'm just the mirror catching your whisper.",
+    }
+
+    def _answers(self, question, n=40):
+        """Sample repeatedly — divine() picks randomly within a branch."""
+        oracle = _load_oracle_module().Oracle()
+        return {oracle.divine(question) for _ in range(n)}
+
+    @pytest.mark.parametrize("question", [
+        "Should I cross the threshold?",
+        "should i go now",
+        "Tell me — should I stay?",
+    ])
+    def test_decision_questions_reach_the_decision_branch(self, question):
+        assert self._answers(question) <= self.DECISION, (
+            "a 'should i' question fell through to another branch — the "
+            "two-word phrase is being matched against split() tokens again"
+        )
+
+    def test_phrase_matching_survives_a_split_on_whitespace(self):
+        """The precise regression: the phrase spans a space."""
+        oracle = _load_oracle_module().Oracle()
+        assert not any("should i" in w for w in "Should I cross?".split()), (
+            "precondition: no whitespace-split token can contain 'should i'"
+        )
+        assert oracle.divine("Should I cross?") in self.DECISION
+
+    def test_expect_wins_over_should_i_when_both_present(self):
+        # "What should I expect?" contains both phrases; it asks what is
+        # coming, not for a decision, so the expectation answers suit it.
+        assert self._answers("What should I expect?") <= self.EXPECTATION
+
+    def test_future_questions_reach_the_coming_branch(self):
+        assert self._answers("What is coming in my future?") <= self.COMING
+
+    def test_unmatched_questions_fall_back(self):
+        assert self._answers("What is my destiny?") <= self.FALLBACK
+
+    def test_every_branch_is_reachable(self):
+        """No branch is dead code — a dead branch was the bug's signature.
+
+        Asserts each question lands inside its own branch, and that the four
+        results are genuinely different sets, so this can't pass by every
+        question quietly funnelling into the same fallback.
+        """
+        cases = {
+            "What is coming?":        self.COMING,
+            "Should I go?":           self.DECISION,
+            "What should I expect?":  self.EXPECTATION,
+            "What is my destiny?":    self.FALLBACK,
+        }
+        got = {}
+        for question, expected in cases.items():
+            answers = self._answers(question, n=25)
+            assert answers <= expected, (
+                f"{question!r} answered from the wrong branch: {answers - expected}"
+            )
+            got[question] = answers
+
+        # Four questions, four distinct branches actually exercised.
+        assert len({frozenset(a) for a in got.values()}) == 4
+
+
 class TestOracleCommandEndToEnd:
     """The daemon-side half: the real call site at process_command."""
 

@@ -13,29 +13,38 @@ class Oracle:
 
     def divine(self, question):
         """Divine an answer based on user input."""
-        
-        # Prioritize reasoning quality over performance optimization
-        if any("future" in w.lower() or "coming" in w.lower() for w in question.split()):
+
+        # Match against the whole question, not word by word. A self-edit on
+        # 2026-08-08 wrote these branches as `any(... for w in question.split())`,
+        # which silently killed the "should i" branch: splitting on whitespace
+        # means no token ever contains a space, so a two-word phrase can never
+        # match one. Single-word branches happened to still work, which is why
+        # it went unnoticed. Keep phrase matching on the full string.
+        q = question.lower()
+
+        if "future" in q or "coming" in q:
             return random.choice([
                 "The winds shift soon — prepare, but do not cling.",
                 "A cycle nears completion; something must be released.",
                 "You stand at a threshold — will you cross it?"
             ])
         
-        # Handle ambiguous or unclear questions
-        elif any("should i" in w.lower() for w in question.split()):
-            return random.choice([
-                "Move with courage — hesitation feeds shadow.",
-                "Wait. The moment isn’t ripe yet.",
-                "The answer is hidden within your first impulse."
-            ])
-        
-        # Handle known scenarios to minimize repetition
-        elif "expect" in question.lower():
+        # Before "should i", deliberately: "What should I expect?" contains
+        # both phrases, and it asks what is coming rather than for a decision,
+        # so the expectation answers suit it and the decision answers don't.
+        elif "expect" in q:
             return random.choice([
                 "You already know the script of fate.",
                 "I am the thread that weaves your destiny together.",
                 "Your heart holds the key, but what is it?"
+            ])
+
+        # Decision questions — the branch the 2026-08-08 self-edit disabled.
+        elif "should i" in q:
+            return random.choice([
+                "Move with courage — hesitation feeds shadow.",
+                "Wait. The moment isn’t ripe yet.",
+                "The answer is hidden within your first impulse."
             ])
         
         # Preserve existing functionality for now
