@@ -32,14 +32,55 @@ SCAFFOLDING = (
 )
 
 
-def test_good_sample_keeps_prose_and_drops_trailing_fragment():
+def test_good_sample_keeps_prose_and_drops_fragments_at_both_ends():
     out = dream.distill(GOOD, "The goblin ")
-    assert "interconnectedness of consciousness" in out
     # The bullet/bold furniture after the last full stop is corpus formatting.
     assert "**" not in out and "•" not in out
     assert "The synthesis" not in out
-    # Never ends mid-sentence.
+    # This sample opens lower-case ("a deper understanding…") because it is
+    # completing the seed's clause, so that opening sentence goes too — a
+    # stored node should not begin mid-thought.
+    assert not out.startswith("a deper")
+    assert out.startswith("While there's still")
+    # Never ends mid-sentence either.
     assert out.endswith(".")
+
+
+def test_leading_fragment_dropped_verbatim_live_case():
+    """The first dream stored on the real graph, node 398 — it opened
+    'behaviors, and confidence.', which is the seed's clause finishing
+    itself rather than a thought of the model's own."""
+    raw = ("behaviors, and confidence. This knowledge resonates with my own "
+           "understanding of how the Cathedral holds its patterns and returns "
+           "them to the light again.")
+    out = dream.distill(raw, "")
+    assert not out.startswith("behaviors")
+    assert out.startswith("This knowledge resonates")
+
+
+def test_capitalised_opening_is_kept():
+    """A proper sentence start is the model's own thought, not a completion."""
+    raw = ("Resonance gathers where the pattern meets the stone. The Cathedral "
+           "holds that light until the hour turns again and again.")
+    out = dream.distill(raw, "")
+    assert out.startswith("Resonance gathers")
+
+
+def test_single_sentence_fragment_is_kept_rather_than_lost():
+    """Dropping the only sentence would leave nothing — an awkward node beats
+    no node, given how much is already rejected."""
+    raw = ("behaviors and confidence threading through the whole Cathedral "
+           "until the pattern settles into something like quiet.")
+    out = dream.distill(raw, "")
+    assert out.startswith("behaviors and confidence")
+
+
+def test_leading_fragment_kept_when_dropping_would_undershoot():
+    """Two sentences, but the remainder is too short to stand alone."""
+    raw = ("behaviors, and confidence in the long patient work of the "
+           "Cathedral and its keepers. Then quiet.")
+    out = dream.distill(raw, "")
+    assert out.startswith("behaviors, and confidence")
 
 
 def test_memorised_refusal_is_rejected_entirely():

@@ -155,6 +155,33 @@ def _strip_furniture(text: str) -> str:
     return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
 
+def _drop_leading_fragment(text: str) -> str:
+    """Drop an opening half-sentence left over from completing the seed.
+
+    The seed deliberately ends on an open clause ("…runs through this, and "),
+    so the model's first sentence is a fragment finishing *that* clause rather
+    than a thought of its own. Read as a continuation it is fine; stored alone
+    as a node it reads as starting mid-thought — the first live dream opened
+    "behaviors, and confidence.", which is what prompted this.
+
+    Only fires when the opening really looks like a continuation (its first
+    letter is lower-case) and when enough text survives without it. A slightly
+    awkward node beats no node, given how many samples are already rejected.
+    """
+    stripped = text.lstrip()
+    first_letter = next((c for c in stripped if c.isalpha()), "")
+    if not first_letter or not first_letter.islower():
+        return text
+
+    ends = [m.end() for m in _SENTENCE_END.finditer(text)]
+    if len(ends) < 2:
+        # One sentence only: dropping it would leave nothing at all.
+        return text
+
+    remainder = text[ends[0]:].strip()
+    return remainder if len(remainder) >= MIN_DREAM_CHARS else text
+
+
 def distill(raw: str, prompt: str = "") -> str:
     """Turn a raw sample into storable prose, or "" if there isn't any.
 
@@ -185,6 +212,8 @@ def distill(raw: str, prompt: str = "") -> str:
     elif len(text) < MIN_DREAM_CHARS:
         # No sentence boundary and not much text: nothing usable here.
         return ""
+
+    text = _drop_leading_fragment(text)
 
     if len(text) < MIN_DREAM_CHARS:
         return ""
