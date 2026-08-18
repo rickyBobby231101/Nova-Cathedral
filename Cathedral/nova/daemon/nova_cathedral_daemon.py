@@ -1631,6 +1631,32 @@ class NovaConsciousness:
         evidence["seed"] = _dream.seed_from_evidence(snippets, term)
         return evidence
 
+    def _motif_has_dream(self, term: str) -> bool:
+        """True if this motif has already been dreamt on (label convention:
+        'Dream: <term> (...)')."""
+        with sqlite3.connect(self.db_path, timeout=15) as con:
+            row = con.execute(
+                "SELECT 1 FROM knowledge_nodes "
+                "WHERE domain='dream' AND source='neuronode' AND label LIKE ? LIMIT 1",
+                (f"Dream: {term.lower()} (%",)
+            ).fetchone()
+        return row is not None
+
+    def _top_undreamt_motif(self) -> str | None:
+        """The strongest cross-domain motif not yet dreamt on.
+
+        Deliberately separate from `_top_unexplained_motif`, which tracks
+        *insight* nodes: reusing that one meant the scheduled dream picked the
+        same top motif every hour, and because the seed is identical and this
+        checkpoint is overfit, it wrote nearly the same sentence each time
+        (observed live — nodes 398 and 399 were near-duplicates). Rotating on
+        dreams keeps the loop exploring the graph instead of one corner of it.
+        """
+        for m in self.eyemoeba_motifs_list(n=60):
+            if len(m["domains"]) >= 2 and not self._motif_has_dream(m["term"]):
+                return m["term"]
+        return None
+
     def dreams_list(self, n: int = 20) -> list[dict]:
         """The dreams neuronode has written, newest first."""
         with sqlite3.connect(self.db_path, timeout=15) as con:
@@ -1676,9 +1702,11 @@ class NovaConsciousness:
 
         term = (term or "").strip().lower()
         if not term:
-            term = await asyncio.to_thread(self._top_unexplained_motif)
+            # Only the unattended path rotates. An explicit term is a
+            # deliberate ask — dreaming the same motif twice is allowed there.
+            term = await asyncio.to_thread(self._top_undreamt_motif)
             if not term:
-                return {"error": "no cross-domain motif to dream on"}
+                return {"error": "every top motif has been dreamt on already"}
 
         evidence = await asyncio.to_thread(self._dream_seed, term)
         if not evidence:

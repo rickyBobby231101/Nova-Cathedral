@@ -261,6 +261,55 @@ def test_dream_status_reports_counts(nova, monkeypatch):
     assert st["every_cycles"] == nova._dream_every
 
 
+@pytest.mark.asyncio
+async def test_scheduled_dream_rotates_to_a_new_motif(nova, monkeypatch):
+    """The bug this guards: the unattended path used to reuse
+    `_top_unexplained_motif`, which tracks *insight* nodes, so it picked the
+    same motif every hour and wrote near-duplicate text (live nodes 398/399).
+    """
+    _seed_motif(nova, "resonance")
+    _seed_motif(nova, "harmonics")
+    monkeypatch.setattr(dream, "available", lambda: {"available": True})
+    monkeypatch.setattr(dream, "dream", lambda seed, attempts=2, **kw: {
+        "text": "The stone remembers what the light forgets, and keeps it.",
+        "attempts": 1})
+
+    first = await nova.eyemoeba_dream()          # no term → scheduled path
+    second = await nova.eyemoeba_dream()         # must not repeat
+    assert first["term"] != second["term"]
+    assert {first["term"], second["term"]} == {"resonance", "harmonics"}
+
+
+@pytest.mark.asyncio
+async def test_explicit_term_may_repeat_a_dreamt_motif(nova, monkeypatch):
+    """Rotation applies to the unattended path only — asking for a motif by
+    name is a deliberate choice."""
+    _seed_motif(nova, "resonance")
+    monkeypatch.setattr(dream, "available", lambda: {"available": True})
+    monkeypatch.setattr(dream, "dream", lambda seed, attempts=2, **kw: {
+        "text": "The stone remembers what the light forgets, and keeps it.",
+        "attempts": 1})
+
+    await nova.eyemoeba_dream("resonance")
+    again = await nova.eyemoeba_dream("resonance")
+    assert again["node_id"] is not None
+    assert len(nova.dreams_list()) == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduled_dream_stops_when_all_motifs_dreamt(nova, monkeypatch):
+    _seed_motif(nova, "resonance")
+    monkeypatch.setattr(dream, "available", lambda: {"available": True})
+    monkeypatch.setattr(dream, "dream", lambda seed, attempts=2, **kw: {
+        "text": "The stone remembers what the light forgets, and keeps it.",
+        "attempts": 1})
+
+    await nova.eyemoeba_dream()
+    exhausted = await nova.eyemoeba_dream()
+    assert "error" in exhausted
+    assert len(nova.dreams_list()) == 1
+
+
 def test_dreams_list_excludes_other_nodes(nova):
     nova._knowledge_add("dream", "Dream: flow", "A dream body.", "neuronode")
     nova._knowledge_add("insight", "Pattern: flow", "An insight.", "eyemoeba")
