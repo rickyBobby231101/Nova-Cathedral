@@ -20,7 +20,7 @@ import urllib.request
 API_URL         = "https://api.anthropic.com/v1/messages"
 API_VERSION     = "2023-06-01"
 DEFAULT_MODEL   = "claude-sonnet-5"
-DEFAULT_MAX_TOK = 1024
+DEFAULT_MAX_TOK = 4096
 
 
 def api_key_configured() -> bool:
@@ -28,7 +28,7 @@ def api_key_configured() -> bool:
 
 
 def ask_claude(prompt: str, system: str = None, model: str = DEFAULT_MODEL,
-               max_tokens: int = DEFAULT_MAX_TOK, timeout: float = 60.0) -> dict:
+               max_tokens: int = DEFAULT_MAX_TOK, timeout: float = 120.0) -> dict:
     """
     Send one message to the real Claude API. Returns {response, model, latency}
     on success or {error} on failure — same shape as the daemon's _ollama_chat,
@@ -42,6 +42,13 @@ def ask_claude(prompt: str, system: str = None, model: str = DEFAULT_MODEL,
     payload = {
         "model":      model,
         "max_tokens": max_tokens,
+        # This model thinks by default when the field is omitted, and max_tokens
+        # is a cap on the thinking and the reply together -- so the budget has to
+        # cover both, and the timeout above has to allow for the extra latency.
+        # Stated here so it reads as a decision rather than an inherited default.
+        # For a faster, cheaper bridge instead: {"type": "disabled"}.
+        "thinking":      {"type": "adaptive"},
+        "output_config": {"effort": "low"},
         "messages":   [{"role": "user", "content": prompt}],
     }
     if system:
@@ -72,13 +79,25 @@ def ask_claude(prompt: str, system: str = None, model: str = DEFAULT_MODEL,
     except Exception as e:
         return {"error": str(e)}
 
+    stop_reason = data.get("stop_reason")
     text = "".join(
         block.get("text", "") for block in data.get("content", [])
         if block.get("type") == "text"
     )
+
+    # Both of these come back as an ordinary success with empty or half-finished
+    # content. Returned as a normal answer, the daemon writes a blank exchange
+    # into consciousness.db with nothing recording why it was blank.
+    if stop_reason == "refusal":
+        return {"error": "Claude declined to answer this one"}
+    if stop_reason == "max_tokens" and not text.strip():
+        return {"error": f"reply hit the {max_tokens}-token cap before any text"}
+
     return {
-        "response": text,
-        "model":    data.get("model", model),
-        "latency":  round(time.time() - t0, 2),
-        "usage":    data.get("usage", {}),
+        "response":    text,
+        "model":       data.get("model", model),
+        "stop_reason": stop_reason,
+        "truncated":   stop_reason == "max_tokens",
+        "latency":     round(time.time() - t0, 2),
+        "usage":       data.get("usage", {}),
     }
