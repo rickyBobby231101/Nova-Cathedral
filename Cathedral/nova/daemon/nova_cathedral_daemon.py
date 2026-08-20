@@ -39,12 +39,32 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(_NOVA_ROOT / "nuclear" / "memory"))
 
 # ── self-edit crash-loop guard ──────────────────────────────────────────────
-# Files Nova is never allowed to propose self-edits to: the live daemon
-# entrypoint (editing the file this process is currently running as is how
-# you get an unrecoverable crash loop) and the self-build safety mechanism
-# itself (editing your own backup/rollback system is how you lose the
-# ability to roll back).
-_SELF_EDIT_PROTECTED = {"nova_cathedral_daemon.py", "nova_self_builder.py"}
+# Files Nova is never allowed to propose self-edits to, each with the reason,
+# so a refusal explains itself rather than guessing at a generic one.
+_SELF_EDIT_PROTECTED = {
+    "nova_cathedral_daemon.py":
+        "it's the live daemon entrypoint — editing the file this process is "
+        "running as is how you get an unrecoverable crash loop",
+    "nova_self_builder.py":
+        "it's the self-build safety mechanism itself — editing your own "
+        "backup/rollback system is how you lose the ability to roll back",
+    # Added 2026-08-20. Not a safety mechanism like the two above; this one is
+    # empirical. oracle_module.py is by far the loop's most frequent target
+    # (25+ of the snapshots in cathedral/self_builds/backups/ are this one
+    # file) and every observed edit has been net-negative: 2026-08-15 deleted
+    # Oracle.divine() and broke the `oracle` socket command outright;
+    # 2026-08-08 disabled the "should i" branch with a per-token match that
+    # can never hit a two-word phrase, and left unguarded example code
+    # printing a divination into the daemon's logs on every import;
+    # 2026-08-19 reverted that import guard and replaced the fallback
+    # responses with f-strings echoing the question back. The crash guard
+    # never caught any of it, because a broken plugin fails silently inside
+    # the daemon's `except Exception: pass` rather than crashing the process.
+    "oracle_module.py":
+        "it is the self-edit loop's most frequent target and its edits have "
+        "repeatedly broken the oracle command silently — pinned by "
+        "tests/test_oracle_contract.py",
+}
 
 # Deliberately independent of nova_self_builder / any optional module below —
 # this must keep working even if a self-edit broke one of those modules.
@@ -3102,12 +3122,16 @@ class NovaConsciousness:
     async def _self_evolve_file(self, path: str, intent: str) -> dict:
         """Read a source file, ask the LLM for a complete improved version, write it.
         Shared by the self_evolve socket command and autonomous self-improvement."""
+        # The guard goes first, deliberately: protection must not be
+        # contingent on an optional module importing. A self-edit that broke
+        # nova_self_builder shouldn't also change the answer for the list that
+        # exists to protect nova_self_builder.
+        protected_reason = _SELF_EDIT_PROTECTED.get(Path(path).name)
+        if protected_reason:
+            return {"error": f"{Path(path).name} is excluded from "
+                             f"self-modification — {protected_reason}"}
         if not _BUILDER_AVAILABLE:
             return {"error": "nova_self_builder module not available"}
-        if Path(path).name in _SELF_EDIT_PROTECTED:
-            return {"error": f"{Path(path).name} is excluded from self-modification "
-                              f"(it's the live daemon entrypoint or the self-build "
-                              f"safety mechanism itself)"}
 
         src = await asyncio.to_thread(_builder.read_source, path)
         if "error" in src:
