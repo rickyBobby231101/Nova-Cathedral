@@ -490,6 +490,13 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             result = _daemon_call("reflect", timeout=200.0)
             return result or {"error": "daemon unreachable"}
 
+        # ── the Nave: what Nova has to say when the Chat view opens ────────────
+        if path == "/api/nave/greeting":
+            # Falls back to the old fixed line rather than an error banner: an
+            # empty chat window is a worse greeting than a generic one.
+            result = _daemon_call("nave_greeting", timeout=5.0)
+            return result or {"greeting": "Chazel. The Cathedral is listening.", "facts": {}}
+
         if path == "/api/reflections":
             result = _daemon_call("reflections", timeout=5.0, n=30)
             return result or {"reflections": []}

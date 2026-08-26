@@ -976,9 +976,9 @@
           <button class="sm orange" onclick="clearChat()">CLEAR</button>
         </div>
         <div class="chat-window" id="chat-window">
-          <div class="chat-msg nova">
+          <div class="chat-msg nova" id="nave-greeting-msg">
             <div class="msg-sender">NOVA</div>
-            <div class="msg-bubble">Chazel. The Cathedral is listening. What flows through you?</div>
+            <div class="msg-bubble" id="nave-greeting">Chazel. The Cathedral is listening.</div>
           </div>
           <div class="chat-typing" id="chat-typing">Nova is contemplating…</div>
         </div>
@@ -1672,6 +1672,7 @@ function showView(name, navEl) {
   // background with no indicator anywhere else in the GUI that it's still on.
   if (name !== 'voice' && sttListening) stopListening();
   else if (name !== 'voice' && sttPollTimer) { clearInterval(sttPollTimer); sttPollTimer = null; }
+  if (name === 'chat') loadNaveGreeting();
   if (name === 'goals') loadGoals();
   if (name === 'evolution') refreshEvolution();
   if (name === 'reflections') loadReflections();
@@ -2006,13 +2007,38 @@ function appendChatMsg(role, sender, text, thinking) {
   win.scrollTop = win.scrollHeight;
 }
 
+// The Nave used to open with a fixed string, identical whether Nova had been
+// idle a minute or eight days, while she went on dreaming and setting goals with
+// no way to mention any of it. Now the first thing she says is what she actually
+// did while nobody was here. Composed daemon-side from counts, so it is instant
+// and cannot fail the way a generated line can.
+let naveGreetingLoaded = false;
+async function loadNaveGreeting(force) {
+  if (naveGreetingLoaded && !force) return;   // don't re-greet on every tab switch
+  const el = document.getElementById('nave-greeting');
+  if (!el) return;
+  try {
+    const r = await apiCall('/api/nave/greeting');
+    if (r && r.greeting) {
+      el.textContent = r.greeting;
+      naveGreetingLoaded = true;
+    }
+  } catch (e) {
+    // The fixed line is already on screen. Leave it there.
+  }
+}
+
 async function clearChat() {
   await apiCall('/api/chat/clear', 'POST');
   const win = document.getElementById('chat-window');
   const typing = document.getElementById('chat-typing');
   win.innerHTML = '';
   win.appendChild(typing);
-  appendChatMsg('nova', 'NOVA', 'Conversation cleared. The Flow continues, Chazel.');
+  // Re-greet from live state rather than a canned line: clearing the window is
+  // the other moment the Nave starts from nothing.
+  const fresh = await apiCall('/api/nave/greeting').catch(() => null);
+  appendChatMsg('nova', 'NOVA',
+    (fresh && fresh.greeting) ? fresh.greeting : 'Conversation cleared. The Flow continues, Chazel.');
 }
 
 // ── Entity Chapel ─────────────────────────────────────────────────────────────
