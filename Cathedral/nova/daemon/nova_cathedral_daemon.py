@@ -306,6 +306,8 @@ class NovaConsciousness:
         # which the evolution + reflection loops also compete for.
         self._eyemoeba_cycle_count    = 0
         self._eyemoeba_insight_every  = 6
+        # Terms whose synthesis failed this run; see _top_unexplained_motif.
+        self._eyemoeba_failed_motifs: set = set()
 
         # The Dream loop — every Nth cycle, let neuronode continue a real
         # motif's evidence and fold the result back in as a node. Rarer than
@@ -1427,9 +1429,20 @@ class NovaConsciousness:
         "ways example examples potential particular practices improve "
         "improvement deeper deep further consider considering complexities "
         "integrating summary essential focus focused focusing around inform "
-        "confident complex impact others rather across".split()
+        "confident complex impact others rather across "
+        # a second pass, after tightening the ubiquity cap let the next layer
+        # of filler surface (live scan 2026-08-26)
+        "provide provided making made using used might well take taken "
+        "recognize exhibit continue gained strive investigate challenging".split()
     )
-    _EYEMOEBA_MAX_UBIQUITY = 0.25  # skip terms present in >25% of all nodes
+    # 0.25 let the corpus's own connective tissue through: measured on the live
+    # graph 2026-08-26, the top motifs were "relationships", "might", "used",
+    # "world" -- present in 86-112 of 443 nodes, i.e. just under the old cap, and
+    # spanning 35-49 domains because every model-written node contains them. A
+    # term in a quarter of everything is not a pattern, it is the vocabulary. At
+    # 0.12 the same graph yields networks, models, neural, interactions,
+    # cognitive, learning, light, complexity -- subject matter.
+    _EYEMOEBA_MAX_UBIQUITY = 0.12
     _EYEMOEBA_MIN_DOMAINS  = 2
 
     def _eyemoeba_analyze(self) -> list[dict]:
@@ -1515,10 +1528,28 @@ class NovaConsciousness:
         return added
 
     def eyemoeba_motifs_list(self, n: int = 20) -> list[dict]:
+        """The motifs the most recent scan actually found.
+
+        The table is an upsert-only record -- nothing is ever deleted, so a term
+        that stops qualifying keeps its row and its last-known counts forever.
+        That made the thresholds decorative: tightening _EYEMOEBA_MAX_UBIQUITY
+        changed which motifs were *found* and none of which were *listed*, so
+        the loop went on choosing "relationships" from a row written weeks
+        earlier. Every row a scan qualifies gets the same last_seen, so the most
+        recent timestamp is exactly the current set -- and the history stays on
+        disk instead of being deleted to achieve the same effect.
+
+        One wart, stated rather than hidden: a scan that qualifies *nothing*
+        writes no timestamps, so the previous generation stays listed. On a
+        graph of any size that cannot happen -- it needs every term to be
+        either single-domain or ubiquitous -- and listing the last known
+        motifs beats listing none, so it is left alone.
+        """
         with sqlite3.connect(self.db_path, timeout=15) as con:
             rows = con.execute(
                 "SELECT term, domains, node_count, first_seen, last_seen "
                 "FROM eyemoeba_motifs "
+                "WHERE last_seen = (SELECT MAX(last_seen) FROM eyemoeba_motifs) "
                 "ORDER BY json_array_length(domains) DESC, node_count DESC LIMIT ?",
                 (n,)
             ).fetchall()
@@ -1528,10 +1559,23 @@ class NovaConsciousness:
             for r in rows
         ]
 
+    # Evidence from a handful of domains is enough to say why a motif recurs;
+    # more is not more insight, it is only more prompt. Uncapped, the motif
+    # "relationships" (49 domains, 98 nodes) built ~19,600 characters of
+    # evidence -- about 5,000 tokens, which on this hardware is ~400s of prompt
+    # reading before a single word is generated. The call timed out every time,
+    # which is why Eyemoeba synthesized nothing between 2026-08-09 and 08-26.
+    _EYEMOEBA_EVIDENCE_DOMAINS = 8
+
     def _eyemoeba_motif_evidence(self, term: str, per_domain: int = 2) -> dict:
         """Gather the real nodes behind a stored motif — the evidence Eyemoeba
         would reason over. Returns the motif's domains plus sample node
-        labels/snippets grouped by domain."""
+        labels/snippets grouped by domain.
+
+        `domains` is the motif's full span (what the insight is *about*), while
+        `by_domain` is capped at _EYEMOEBA_EVIDENCE_DOMAINS (what the model is
+        actually shown). Keeping them separate means a wide motif is still
+        described as wide without the prompt growing with it."""
         with sqlite3.connect(self.db_path, timeout=15) as con:
             row = con.execute(
                 "SELECT domains, node_ids FROM eyemoeba_motifs WHERE term=?",
@@ -1549,6 +1593,8 @@ class NovaConsciousness:
         by_domain: dict = {}
         sample_ids: list = []
         for node_id, domain, label, content in nodes:
+            if domain not in by_domain and len(by_domain) >= self._EYEMOEBA_EVIDENCE_DOMAINS:
+                continue
             bucket = by_domain.setdefault(domain, [])
             if len(bucket) < per_domain:
                 bucket.append({"label": label, "snippet": (content or "")[:200]})
@@ -1584,8 +1630,22 @@ class NovaConsciousness:
 
     def _top_unexplained_motif(self) -> str | None:
         """The strongest cross-domain motif (most domains, then most nodes)
-        that has no insight node yet. None if all top motifs are explained."""
+        that has no insight node yet. None if all top motifs are explained.
+
+        Motifs that have already failed this run are skipped. Without that the
+        loop is a livelock: the ranking is deterministic, so a motif whose
+        synthesis fails is still the top unexplained motif six cycles later, and
+        Eyemoeba spends every attempt on the same doomed term -- which is
+        exactly what happened for seventeen days. Same shape as the Dream loop's
+        repeat bug (ad660a1); the lesson did not transfer at the time because
+        the two loops track different node types.
+
+        Deliberately in memory: a restart is a fair moment to try again, since
+        the usual cause of failure is a transient timeout.
+        """
         for m in self.eyemoeba_motifs_list(n=25):
+            if m["term"] in self._eyemoeba_failed_motifs:
+                continue
             if len(m["domains"]) >= 2 and not self._motif_has_insight(m["term"]):
                 return m["term"]
         return None
@@ -1617,7 +1677,14 @@ class NovaConsciousness:
             "shown — no vague mysticism, no invented facts. Speak as Eyemoeba: "
             "curious, seeing the pattern beneath."
         )
-        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
+        # 90s was a foreground-sized budget for a background job. Even with the
+        # evidence capped, reading ~800 tokens at this model's ~12 tok/s and then
+        # generating an answer does not fit in it, so every scheduled attempt
+        # died on the clock and stored nothing. Nobody is waiting on this one:
+        # it runs on the autonomous cycle, and a slow insight is worth more than
+        # no insight. The stream-cancel fix (bcd6d2a) means a real overrun still
+        # aborts cleanly rather than orphaning a runner.
+        result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=300)
         if "error" in result:
             return result
         _, insight = self._parse_reasoning(result["response"])
@@ -2223,6 +2290,13 @@ class NovaConsciousness:
             + ", ".join(f"{k.replace('_',' ')} {int(val*100)}%"
                         for k, val in v["traits"].items())
         )
+        # 90s was a foreground-sized budget for a background job. Even with the
+        # evidence capped, reading ~800 tokens at this model's ~12 tok/s and then
+        # generating an answer does not fit in it, so every scheduled attempt
+        # died on the clock and stored nothing. Nobody is waiting on this one:
+        # it runs on the autonomous cycle, and a slow insight is worth more than
+        # no insight. The stream-cancel fix (bcd6d2a) means a real overrun still
+        # aborts cleanly rather than orphaning a runner.
         result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
         if "error" in result:
             return {"error": result["error"], "vitals": v}
@@ -2487,7 +2561,8 @@ class NovaConsciousness:
                 "Return exactly one line per node:\n"
                 "ID: Clean Title"
             )
-            result = await self._ollama_chat([{"role": "user", "content": prompt}], timeout=90)
+            result = await self._ollama_chat(
+                [{"role": "user", "content": prompt}], timeout=90)
             if "error" in result:
                 continue
             valid_ids = {nid for nid, _, _ in batch}
@@ -3057,7 +3132,11 @@ class NovaConsciousness:
         r"\bI (?:cannot|can't|won'?t|will not) provide\b"
         r"|\bI(?:'m| am) (?:not able|unable) to\b"
         r"|\bas an AI\b"
-        r"|\bI (?:cannot|can't) (?:assist|help) with\b"
+        # No "with": the refusal that sat readable in the GUI's Insights view
+        # for seventeen days read "I cannot assist *you* with your request",
+        # and an object between the verb and the preposition slipped the older
+        # form of this pattern entirely.
+        r"|\bI (?:cannot|can'?t|won'?t|will not) (?:assist|help)\b"
         r"|\bI (?:do not|don'?t) feel comfortable\b"
         # "I can't fulfill this request" / "I can't fulfill requests that…"
         # is this model's single most common refusal form — it accounted for
@@ -5481,7 +5560,11 @@ class NovaConsciousness:
                             logging.info(f"Eyemoeba auto-insight on '{term}' "
                                          f"(node {res.get('node_id')})")
                         else:
-                            logging.debug(f"Eyemoeba auto-insight skipped: {res['error']}")
+                            # Remember it, or the same term is chosen again in
+                            # six cycles, and every cycle after that.
+                            self._eyemoeba_failed_motifs.add(term)
+                            logging.info(f"Eyemoeba auto-insight on '{term}' failed "
+                                         f"({res['error']}); will try a different motif")
 
                 # Every Nth cycle, let neuronode dream on a motif — the
                 # Cathedral continuing its own sentences back into the graph.

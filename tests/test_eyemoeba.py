@@ -19,9 +19,9 @@ def _seed_graph(nova):
     _add_node(nova, "consciousness", "Meditation", "Deep meditation produces resonance across brain regions")
     # "photosynthesis" appears only in one domain — not a motif.
     _add_node(nova, "herbal", "Chlorophyll", "Chlorophyll drives photosynthesis in green plants")
-    # Enough filler that a 3-node motif stays under the 25% ubiquity cap
-    # (3/14 ≈ 21%) — mirrors a realistically-sized graph rather than a
-    # toy one where every real motif looks ubiquitous.
+    # Enough filler that a 3-node motif stays under the ubiquity cap — mirrors a
+    # realistically-sized graph rather than a toy one where every real motif
+    # looks ubiquitous.
     _add_node(nova, "cathedral", "Spire", "The spire reaches upward toward aspiration")
     _add_node(nova, "cathedral", "Nave", "The nave holds the central gathering space")
     _add_node(nova, "cathedral", "Crypt", "The crypt keeps compressed old memory below")
@@ -32,6 +32,30 @@ def _seed_graph(nova):
     _add_node(nova, "cosmos", "Nebula", "Nebulae birth stars from collapsing dust")
     _add_node(nova, "cosmos", "Pulsar", "Pulsars sweep lighthouse beams of radiation")
     _add_node(nova, "wellbeing", "Sleep", "Sleep consolidates learning overnight")
+
+    # Ubiquity cap is 0.12 (tightened 2026-08-26 from 0.25, which was letting the
+    # corpus's own connective tissue rank as its deepest patterns). A 3-node
+    # motif therefore needs a graph of at least 25 nodes to survive, which is
+    # also closer to the real one: 443 nodes, where 3 is well under a percent.
+    _add_node(nova, "filler4", "Node 14", "Unremarkable padding sentence number 14 about nothing in particular")
+    _add_node(nova, "filler5", "Node 15", "Unremarkable padding sentence number 15 about nothing in particular")
+    _add_node(nova, "filler5", "Node 16", "Unremarkable padding sentence number 16 about nothing in particular")
+    _add_node(nova, "filler5", "Node 17", "Unremarkable padding sentence number 17 about nothing in particular")
+    _add_node(nova, "filler6", "Node 18", "Unremarkable padding sentence number 18 about nothing in particular")
+    _add_node(nova, "filler6", "Node 19", "Unremarkable padding sentence number 19 about nothing in particular")
+    _add_node(nova, "filler6", "Node 20", "Unremarkable padding sentence number 20 about nothing in particular")
+    _add_node(nova, "filler7", "Node 21", "Unremarkable padding sentence number 21 about nothing in particular")
+    _add_node(nova, "filler7", "Node 22", "Unremarkable padding sentence number 22 about nothing in particular")
+    _add_node(nova, "filler7", "Node 23", "Unremarkable padding sentence number 23 about nothing in particular")
+    _add_node(nova, "filler8", "Node 24", "Unremarkable padding sentence number 24 about nothing in particular")
+    _add_node(nova, "filler8", "Node 25", "Unremarkable padding sentence number 25 about nothing in particular")
+    _add_node(nova, "filler8", "Node 26", "Unremarkable padding sentence number 26 about nothing in particular")
+    _add_node(nova, "filler9", "Node 27", "Unremarkable padding sentence number 27 about nothing in particular")
+    _add_node(nova, "filler9", "Node 28", "Unremarkable padding sentence number 28 about nothing in particular")
+    _add_node(nova, "filler9", "Node 29", "Unremarkable padding sentence number 29 about nothing in particular")
+    _add_node(nova, "filler10", "Node 30", "Unremarkable padding sentence number 30 about nothing in particular")
+    _add_node(nova, "filler10", "Node 31", "Unremarkable padding sentence number 31 about nothing in particular")
+
 
 
 def test_cross_domain_term_is_detected(nova):

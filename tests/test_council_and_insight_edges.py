@@ -70,6 +70,13 @@ def _seed_motif(nova):
         "volcanic ash farmland soil", "glaciers atmospheric records",
         "spiders orb webs silk", "windmills grain flour bread",
         "salt marshes tidal waters",
+        # Padded 2026-08-26 when the ubiquity cap tightened to 0.12: light's
+        # three nodes need a graph of at least 25 to still read as a motif.
+        "obsidian blades knapped volcanic glass", "lichens colonise bare rock",
+        "aqueducts carried springwater cities", "cicadas prime numbered cycles",
+        "peat bogs preserve leather artefacts", "trade winds sailing routes",
+        "quartz veins hydrothermal deposits", "beeswax sealed documents",
+        "kilns fired earthenware vessels", "looms wove linen textiles",
     ]):
         nova._knowledge_add(f"d{i % 5}", f"filler{i}", txt)
     nova._eyemoeba_store_motifs(nova._eyemoeba_analyze())

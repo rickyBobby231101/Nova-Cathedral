@@ -18,8 +18,9 @@ def _seed_motif(nova):
     _add(nova, "quantum", "Photon", "Light behaves as photons carrying energy.")
     _add(nova, "esoteric", "Divine Spark", "The trapped light of the soul seeks release.")
     _add(nova, "herbal", "Sunlight", "Plants convert light into life through the leaf.")
-    # Enough distinct filler that light's 3 nodes stay under the 25% ubiquity
-    # cap (3/20 = 15%); each filler uses unique words so it makes no motif.
+    # Enough distinct filler that light's 3 nodes stay under the ubiquity cap,
+    # tightened to 0.12 on 2026-08-26 (3/28 ≈ 11%); each filler uses unique
+    # words so it makes no motif of its own.
     fillers = [
         "granite masonry supports the vaulted ceiling",
         "rivers carve valleys over millennia of erosion",
@@ -38,6 +39,14 @@ def _seed_motif(nova):
         "windmills ground grain into flour for bread",
         "lightning heats air into a plasma channel",
         "salt marshes filter coastal tidal waters daily",
+        "obsidian blades were knapped from volcanic glass",
+        "lichens colonise bare rock before mosses arrive",
+        "aqueducts carried fresh springwater into cities",
+        "cicadas emerge on prime-numbered year cycles",
+        "peat bogs preserve leather and wooden artefacts",
+        "trade winds drove sailing routes across oceans",
+        "quartz veins signal hydrothermal mineral deposits",
+        "beeswax sealed documents against tampering",
     ]
     for i, text in enumerate(fillers):
         _add(nova, f"d{i % 5}", f"filler{i}", text)

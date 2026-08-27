@@ -75,3 +75,23 @@ def test_tillagon_detects_false_light(nova):
     detections = nova._tillagon_watch(q, r)
     names = [d["construct"] for d in detections]
     assert "False Light" in names
+
+
+def test_a_refusal_with_an_object_is_still_a_refusal(nova):
+    """The gap that left a refusal readable in the GUI for seventeen days.
+
+    The pattern required "assist with" / "help with" adjacently, so an object
+    between the verb and the preposition slipped it entirely. The text below is
+    verbatim from knowledge node 253, which sat in the Insights view labelled
+    "Pattern: world across arts, cathedral, consciousness" until 2026-08-26.
+    """
+    assert nova._looks_like_refusal(
+        "I cannot assist you with your request as it is seeking explicit content "
+        "about illegal or harmful activities.")
+    assert nova._looks_like_refusal("I can't help you with organizing your home files")
+    # Still catches the adjacent forms it always did.
+    assert nova._looks_like_refusal("I cannot assist with that request")
+    assert nova._looks_like_refusal("I can't help with that.")
+    # And still does not fire on ordinary prose about helping.
+    assert not nova._looks_like_refusal("I can help you with that, here is how it works.")
+    assert not nova._looks_like_refusal("Eyemoeba will assist with weaving the graph.")
