@@ -108,3 +108,43 @@ def test_a_failed_motif_is_not_chosen_again(nova):
 def test_the_failure_set_starts_empty(nova):
     """A restart is a fair moment to try again: the usual cause is a timeout."""
     assert nova._eyemoeba_failed_motifs == set()
+
+
+# --- the quarantine ledger -----------------------------------------------
+
+
+def test_quarantine_is_fully_reversible(nova, tmp_path):
+    """"Nothing is deleted" has to mean every column, not just the text.
+
+    The ledger originally recorded only the fossil column, so restore put the
+    content back and left the row sitting in domain='refusal_fossil' forever --
+    three-quarters of an undo.
+    """
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve()
+                           .parents[1] / "Cathedral" / "nova" / "system"))
+    import purge_refusal_fossils as P
+    import sqlite3
+
+    nova._knowledge_add("cosmos", "Refused", "I cannot assist with that request.")
+    nova._knowledge_add("herbal", "Real", "Yarrow supports the body in several ways.")
+
+    con = sqlite3.connect(nova.db_path)
+    before = con.execute(
+        "SELECT id, domain, content FROM knowledge_nodes ORDER BY id").fetchall()
+
+    found = P.scan(con, P._detector())
+    with con:
+        assert P.apply(con, found) == 1
+
+    quarantined = con.execute(
+        "SELECT domain, content FROM knowledge_nodes WHERE label='Refused'").fetchone()
+    assert quarantined == ("refusal_fossil", "")
+
+    with con:
+        P.restore(con)
+
+    after = con.execute(
+        "SELECT id, domain, content FROM knowledge_nodes ORDER BY id").fetchall()
+    assert after == before, "restore must put back every column it overwrote"
+    assert con.execute("SELECT COUNT(*) FROM refusal_fossils").fetchone()[0] == 0

@@ -54,6 +54,7 @@ forced, both about not throwing away real content:
     individually and the node is only quarantined whole if nothing survives.
 """
 import argparse
+import json
 import re
 import sqlite3
 import sys
@@ -173,6 +174,14 @@ def _ledger(con):
         " id INTEGER PRIMARY KEY, tbl TEXT, row_id INTEGER, col TEXT,"
         " original TEXT, quarantined TEXT)"
     )
+    # `extras` holds the other columns a quarantine overwrites -- a node's
+    # domain, a goal's status -- as JSON. Without it "nothing is deleted" was
+    # only three-quarters true: restore put the text back and left the row
+    # sitting in domain='refusal_fossil' forever. Added after the fact, so it
+    # is a migration rather than part of the CREATE.
+    cols = {r[1] for r in con.execute("PRAGMA table_info(refusal_fossils)")}
+    if "extras" not in cols:
+        con.execute("ALTER TABLE refusal_fossils ADD COLUMN extras TEXT")
 
 
 def scan(con, patterns):
@@ -215,14 +224,23 @@ def apply(con, found):
                 (table, row_id, col)).fetchone()
             if already:
                 continue  # re-running must not overwrite a saved original
+            emptied = not replacement or replacement == CONVERSATION_MARKER
+            extras = {}
+            if emptied and resets:
+                current = con.execute(
+                    f"SELECT {', '.join(resets)} FROM {table} WHERE {idcol}=?",
+                    (row_id,)).fetchone()
+                extras = dict(zip(resets, current))
             con.execute(
-                "INSERT INTO refusal_fossils (tbl, row_id, col, original, quarantined)"
-                " VALUES (?,?,?,?,?)", (table, row_id, col, original, now))
+                "INSERT INTO refusal_fossils"
+                " (tbl, row_id, col, original, quarantined, extras)"
+                " VALUES (?,?,?,?,?,?)",
+                (table, row_id, col, original, now,
+                 json.dumps(extras) if extras else None))
             sets = f"{col}=?"
             args = [replacement]
             # A node that kept some of its entries is still a real node -- only
             # a row emptied outright gets moved out of its domain.
-            emptied = not replacement or replacement == CONVERSATION_MARKER
             for k, v in (resets.items() if emptied else {}.items()):
                 sets += f", {k}=?"
                 args.append(v)
@@ -235,10 +253,15 @@ def apply(con, found):
 def restore(con):
     _ledger(con)
     rows = con.execute(
-        "SELECT id, tbl, row_id, col, original FROM refusal_fossils").fetchall()
-    for lid, table, row_id, col, original in rows:
+        "SELECT id, tbl, row_id, col, original, extras FROM refusal_fossils").fetchall()
+    for lid, table, row_id, col, original, extras in rows:
         idcol = TARGETS[table][0]
-        con.execute(f"UPDATE {table} SET {col}=? WHERE {idcol}=?", (original, row_id))
+        sets, args = [f"{col}=?"], [original]
+        for k, v in json.loads(extras or "{}").items():
+            sets.append(f"{k}=?")
+            args.append(v)
+        args.append(row_id)
+        con.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE {idcol}=?", args)
         con.execute("DELETE FROM refusal_fossils WHERE id=?", (lid,))
     return len(rows)
 

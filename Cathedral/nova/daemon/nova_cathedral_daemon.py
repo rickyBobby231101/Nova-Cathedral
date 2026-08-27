@@ -127,6 +127,44 @@ def _self_edit_crash_guard() -> None:
 
 _self_edit_crash_guard()
 
+def _label(prefix: str, term: str, domains: list, joiner: str = ", ",
+           limit: int = 80) -> str:
+    """A node label that reads as a whole phrase.
+
+    Two faults this fixes, both seen in live labels:
+
+      * **Blank domains.** Six nodes in the graph carry domain='' , which
+        rendered as "Pattern: neural across , Artificial Intelligence, ..." --
+        a leading comma with nothing before it.
+      * **Mid-word truncation.** The label was cut with a bare [:80], landing
+        inside whatever domain name straddled the boundary: "Dream: experience
+        (Artificial Intelligence, Machine Learning, Climate Modeling a". Now it
+        drops whole domains until it fits and says so with an ellipsis, so the
+        label always ends on something that is actually a word.
+    """
+    named = [d for d in domains if (d or "").strip()]
+    if not named:
+        # Every domain was blank. Name the motif and stop, rather than emitting
+        # an empty bracket or a dangling "across".
+        return f"{prefix}: {term}"
+
+    head = f"{prefix}: {term} across " if prefix == "Pattern" else f"{prefix}: {term} ("
+    tail = "" if prefix == "Pattern" else ")"
+
+    while named:
+        body = joiner.join(named)
+        candidate = f"{head}{body}{tail}"
+        if len(candidate) <= limit:
+            return candidate
+        named.pop()          # drop the last domain and try again
+        if named:
+            candidate = f"{head}{joiner.join(named)}…{tail}"
+            if len(candidate) <= limit:
+                return candidate
+    # Even one domain does not fit the limit; the motif alone is still a label.
+    return f"{prefix}: {term}"
+
+
 def _dream_motif(label: str) -> str:
     """The one word a dream was about, out of its stored label.
 
@@ -1461,6 +1499,11 @@ class NovaConsciousness:
         # term -> {domain -> set(node_ids)}
         term_map: dict = {}
         for node_id, domain, label, content in rows:
+            # A node with no domain cannot be evidence of a *cross-domain*
+            # pattern, and counting '' as a domain inflated the span that the
+            # ranking is built on.
+            if not (domain or "").strip():
+                continue
             words = set(re.findall(r"[a-z]{4,}", f"{label} {content}".lower()))
             for w in words - self._EYEMOEBA_STOPWORDS:
                 term_map.setdefault(w, {}).setdefault(domain, set()).add(node_id)
@@ -1694,9 +1737,9 @@ class NovaConsciousness:
 
         node_id = None
         if store:
-            label = f"Pattern: {term} across {', '.join(evidence['domains'][:3])}"
+            label = _label("Pattern", term, evidence["domains"][:3])
             node_id = await asyncio.to_thread(
-                self._knowledge_add, "insight", label[:80], insight, "eyemoeba"
+                self._knowledge_add, "insight", label, insight, "eyemoeba"
             )
             # Connect the insight to the evidence it was drawn from, so it's
             # part of the graph structure (linked to its source nodes across
@@ -1932,9 +1975,9 @@ class NovaConsciousness:
         text = result["text"]
         node_id = None
         if store:
-            label = f"Dream: {term} ({', '.join(evidence['domains'][:2])})"
+            label = _label("Dream", term, evidence["domains"][:2])
             node_id = await asyncio.to_thread(
-                self._knowledge_add, "dream", label[:80], text, "neuronode")
+                self._knowledge_add, "dream", label, text, "neuronode")
             # Tie the dream to the evidence that seeded it, so it enters the
             # graph connected rather than as an orphan the healer must adopt.
             def _weave():
