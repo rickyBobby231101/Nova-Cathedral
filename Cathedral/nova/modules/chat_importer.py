@@ -34,6 +34,16 @@ _LABEL_RE = re.compile(
 )
 
 
+def is_speaker_label(line: str) -> bool:
+    """True if this line would start a new turn.
+
+    Public so that anything WRITING a transcript can ask rather than guess.
+    Note the pattern allows leading whitespace, so indenting a line does not
+    neutralize it — callers must break the match some other way.
+    """
+    return _LABEL_RE.match(line) is not None
+
+
 def file_hash(text: str) -> str:
     """Content hash used to detect re-saved/edited files under the same name."""
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
