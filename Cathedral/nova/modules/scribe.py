@@ -208,7 +208,7 @@ def organize(inbox=None, dry_run=False) -> dict:
 
 
 def collect_tags(roots=None) -> dict:
-    """Map tag -> [(title, path-relative-to-cathedral), ...] across filed docs."""
+    """Map tag -> [(title, absolute Path), ...] across filed docs."""
     roots = roots or [SCRIBE_ROOT, KNOWLEDGE_DIR]
     tags: dict = {}
     for root in roots:
@@ -225,15 +225,11 @@ def collect_tags(roots=None) -> dict:
             raw = meta.get("tags") or []
             if isinstance(raw, str):
                 raw = [t.strip() for t in raw.split(",")]
-            try:
-                rel = doc.relative_to(HOME / "cathedral")
-            except ValueError:
-                rel = doc
             title = str(meta.get("title") or doc.stem)
             for t in raw:
                 t = str(t).strip()
                 if t:
-                    tags.setdefault(t, []).append((title, str(rel)))
+                    tags.setdefault(t, []).append((title, doc.resolve()))
     return tags
 
 
@@ -247,19 +243,32 @@ def build_index(index_path=None, dry_run=False) -> dict:
         out = ["# Scribe Index", "",
                f"*{len(tags)} tags across {total} filed entries. "
                f"Rebuilt {now}. Generated — edits here are overwritten.*", ""]
+        # Links must be relative to the index itself, not to the cathedral
+        # root — the index lives inside scribe/, so a cathedral-relative path
+        # resolves to scribe/scribe/... and every link dies.
+        base = index_path.resolve().parent
         for tag in sorted(tags):
             out.append(f"## {tag}")
-            for title, rel in sorted(set(tags[tag])):
-                out.append(f"- [{title}]({rel})")
+            for title, doc in sorted(set(tags[tag])):
+                out.append(f"- [{title}]({os.path.relpath(doc, base)})")
             out.append("")
         _atomic_write(index_path, "\n".join(out).rstrip() + "\n")
     return {"tags": len(tags), "entries": total}
 
 
 def run(dry_run=False) -> dict:
-    """Full pass: file the inbox, then rebuild the index."""
+    """Full pass: file the inbox, and rebuild the index if anything moved.
+
+    The rebuild is skipped when nothing was filed. It is cheap, but it stamps
+    a fresh "Rebuilt <time>" line every pass, so an unconditional rebuild
+    means INDEX.md changes every 30 minutes forever while saying nothing new.
+    Call build_index() directly to force a refresh.
+    """
     s = organize(dry_run=dry_run)
-    s["index"] = build_index(dry_run=dry_run)
+    if s["filed"] or dry_run:
+        s["index"] = build_index(dry_run=dry_run)
+    else:
+        s["index"] = {"tags": 0, "entries": 0, "skipped": True}
     return s
 
 

@@ -291,9 +291,24 @@ def read_nova_source() -> dict:
     return {"nova_root": str(NOVA_ROOT), "files": sources, "count": len(sources)}
 
 
+# Topics arrive from the model, so they can be blank or carry path
+# separators. A blank one used to produce the filename ".md", which the
+# Weaver skips as a dotfile — 57 research entries accumulated there over four
+# months and never reached the graph. A topic with "/" would write outside the
+# knowledge directory entirely.
+_TOPIC_SAFE_RE = re.compile(r"[^a-z0-9._-]+")
+UNCATEGORIZED = "uncategorized"
+
+
+def topic_filename(topic: str) -> str:
+    """Turn a model-supplied topic into a safe, weavable filename stem."""
+    stem = _TOPIC_SAFE_RE.sub("_", (topic or "").strip().lower()).strip("._-")
+    return stem or UNCATEGORIZED
+
+
 def append_knowledge(topic: str, content: str) -> dict:
     """Append a knowledge note to Nova's knowledge base file."""
-    kb_path = CATHEDRAL / "knowledge" / f"{topic.lower().replace(' ','_')}.md"
+    kb_path = CATHEDRAL / "knowledge" / f"{topic_filename(topic)}.md"
     kb_path.parent.mkdir(parents=True, exist_ok=True)
     ts    = datetime.now().isoformat()
     entry = f"\n\n## {ts}\n\n{content}\n"

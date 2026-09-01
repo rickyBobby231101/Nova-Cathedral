@@ -176,3 +176,38 @@ def test_missing_inbox_is_not_an_error(tree):
     shutil.rmtree(tree["inbox"])
     s = sc.organize()
     assert s["scanned"] == 0 and s["filed"] == 0
+
+
+def test_index_links_actually_resolve(tree):
+    """The index lives inside scribe/, so cathedral-relative links resolve to
+    scribe/scribe/... and every one of them is dead. Asserting the filename
+    appears in the text does not catch that — the link has to be followed."""
+    import re
+
+    _drop(tree, "a.md", "type: system_log\ntags: [alpha]")
+    _drop(tree, "b.md", "type: codex\ntags: [alpha]")   # lands in knowledge/
+    sc.organize()
+
+    index = tree["root"] / "INDEX.md"
+    sc.build_index(index_path=index)
+
+    links = re.findall(r"\]\(([^)]+)\)", index.read_text())
+    assert len(links) == 2
+    for href in links:
+        assert (index.parent / href).resolve().is_file(), f"dead link: {href}"
+
+
+def test_run_does_not_touch_the_index_when_nothing_was_filed(tree):
+    """An unconditional rebuild restamps INDEX.md every pass, so the file
+    churns forever while saying nothing new."""
+    _drop(tree, "a.md", "type: note\ntags: [alpha]")
+    sc.run()
+    index = tree["root"] / "INDEX.md"
+    before = index.read_text()
+    mtime = index.stat().st_mtime_ns
+
+    res = sc.run()          # inbox is empty this time
+    assert res["filed"] == 0
+    assert res["index"].get("skipped") is True
+    assert index.read_text() == before
+    assert index.stat().st_mtime_ns == mtime

@@ -44,6 +44,20 @@ DOMAIN_KEYWORDS = {
                "eyemoeba", "phoenix", "zorya", "the flow", "distortion"],
 }
 
+# A document filed by the Scribe arrives carrying YAML frontmatter. Weaving
+# it whole puts `type`, `status`, `active`, `scribe`, `filed` into the node's
+# vocabulary — metadata every filed document shares, so they would thread to
+# each other on how they were filed rather than on what they say. (Same shape
+# as the Eyemoeba motifs that turned out to be the corpus's own vocabulary.)
+# Only the block is dropped; no YAML is parsed, so a malformed block costs
+# nothing here.
+_FRONTMATTER_RE = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n?", re.DOTALL)
+
+
+def strip_frontmatter(text: str) -> str:
+    return _FRONTMATTER_RE.sub("", text, count=1)
+
+
 STOPWORDS = set("""
 the and for with that this from have will your which their about would there
 been they them then than what when where into more some also each other
@@ -94,7 +108,8 @@ def weave(db_path=DB_PATH, knowledge_dir=KNOWLEDGE_DIR,
         if label in existing:
             skipped += 1
             continue
-        text = doc.read_text(encoding="utf-8", errors="replace").strip()
+        text = strip_frontmatter(
+            doc.read_text(encoding="utf-8", errors="replace")).strip()
         if not text:
             continue
         domain = classify_domain(doc.stem, text)
