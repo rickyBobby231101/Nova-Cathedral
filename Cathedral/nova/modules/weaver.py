@@ -104,7 +104,8 @@ def weave(db_path=DB_PATH, knowledge_dir=KNOWLEDGE_DIR,
 
     summary = {
         "documents": len(docs), "woven": len(woven), "skipped": skipped,
-        "edges_added": 0, "domains": dict(Counter(d["domain"] for d in woven)),
+        "edges_added": 0, "edges_strengthened": 0,
+        "domains": dict(Counter(d["domain"] for d in woven)),
         "sample": [(d["domain"], d["label"], d["weight"]) for d in woven[:15]],
     }
 
@@ -135,13 +136,29 @@ def weave(db_path=DB_PATH, knowledge_dir=KNOWLEDGE_DIR,
             sim = len(va & vb) / len(va | vb)
             if sim >= min_similarity:
                 candidates.append((sim, a, b))
-    candidates.sort(reverse=True)
+    # New docs first, whatever their similarity. max_edges_per_node is a
+    # per-RUN budget shared with the re-strengthening of existing pairs, so
+    # sorting purely by similarity can spend it before the new document's turn
+    # comes — and the new document is the reason the run happened.
+    # Note this does NOT rescue a doc whose best similarity is below
+    # min_similarity: such a pair is never a candidate at all. Hand-written
+    # documents routinely land there (0.18 wants ~18 shared words out of 60,
+    # and this corpus's threshold was tuned on machine-written research prose
+    # that overlaps heavily with itself). Those arrive as orphans, and the
+    # daemon's weave_orphans pass — term overlap, no threshold — is what
+    # connects them.
+    new_ids = {d["id"] for d in woven}
+    candidates.sort(key=lambda c: (c[1] in new_ids or c[2] in new_ids, c[0]),
+                    reverse=True)
 
     edge_count = Counter()
     for sim, a, b in candidates:
         if edge_count[a] >= max_edges_per_node or edge_count[b] >= max_edges_per_node:
             continue
         strength = round(min(0.9, sim * 2.5), 2)
+        already = con.execute(
+            "SELECT 1 FROM knowledge_edges WHERE from_id=? AND to_id=?",
+            (a, b)).fetchone()
         con.execute(
             """INSERT INTO knowledge_edges (from_id, to_id, strength, resonance_score, created)
                VALUES (?,?,?,?,?)
@@ -151,7 +168,10 @@ def weave(db_path=DB_PATH, knowledge_dir=KNOWLEDGE_DIR,
             (a, b, strength, 0.5, now))
         edge_count[a] += 1
         edge_count[b] += 1
-        summary["edges_added"] += 1
+        if already:
+            summary["edges_strengthened"] += 1
+        else:
+            summary["edges_added"] += 1
     con.commit()
 
     summary["total_nodes"] = con.execute("SELECT COUNT(*) FROM knowledge_nodes").fetchone()[0]
@@ -177,7 +197,8 @@ def main():
         for dom, label, w in s["sample"]:
             print(f"  [{dom}] {label} (weight {w})")
     elif s["woven"]:
-        print(f"woven: {s['woven']} nodes, {s['edges_added']} light-threads "
+        print(f"woven: {s['woven']} nodes, {s['edges_added']} new light-threads "
+              f"({s['edges_strengthened']} strengthened) "
               f"(graph now {s['total_nodes']} nodes, {s['total_edges']} edges)")
 
 

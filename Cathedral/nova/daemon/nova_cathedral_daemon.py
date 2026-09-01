@@ -255,6 +255,12 @@ except ImportError:
     _WEAVER_AVAILABLE = False
 
 try:
+    import scribe as _scribe
+    _SCRIBE_AVAILABLE = True
+except ImportError:
+    _SCRIBE_AVAILABLE = False
+
+try:
     import dream as _dream
     _DREAM_AVAILABLE = True
 except ImportError:
@@ -3115,6 +3121,28 @@ class NovaConsciousness:
                 # ── resource-triggered maintenance every 15 cycles ────────────
                 if cycle % 15 == 0:
                     await self._resource_maintenance()
+
+                # ── the Scribe files the inbox, just ahead of the Weaver ──────
+                # Ordering is deliberate: a document declaring a knowledge type
+                # is filed into the Weaver's directory, so running the Scribe
+                # first lets it reach the graph in this same cycle rather than
+                # waiting three more.
+                if cycle % 3 == 0 and _SCRIBE_AVAILABLE:
+                    try:
+                        sc = await asyncio.to_thread(_scribe.run)
+                        if sc["filed"]:
+                            logging.info(
+                                f"The Scribe filed {sc['filed']} document(s) "
+                                f"({sc['index']['tags']} tags indexed)")
+                        for name, t in sc["unrouted"]:
+                            logging.info(f"The Scribe left '{name}' in the inbox: "
+                                         f"unrecognized type '{t}'")
+                        for name, dest in sc["conflicts"]:
+                            logging.warning(f"The Scribe left '{name}' in the inbox: "
+                                            f"'{dest}' already holds that name")
+                    except Exception as e:
+                        # Filing must never take the evolution loop down with it.
+                        logging.error(f"Scribe error: {e}")
 
                 # ── the Weaver tends the rose window every 3 cycles ───────────
                 if cycle % 3 == 0 and _WEAVER_AVAILABLE:
