@@ -112,14 +112,36 @@ def is_refusal(patterns, text: str) -> bool:
     return bool(hits) and any(h != _WEAK for h in hits)
 
 
+# The sentences that travel *with* a refusal rather than after it: crisis
+# resources, the offer to help with something else. Added 2026-09-03, when
+# trimming knowledge nodes 503 and 571 left exactly this behind and called it
+# "real content underneath" — 276 and 455 characters of helpline text, kept in
+# the knowledge graph as though it were something Nova had learned. The Dream
+# loop draws its vocabulary from that graph.
+#
+# Only ever applied to text that is_refusal() has already fired on, so a
+# genuine node *about* crisis resources is never touched: it would have to open
+# with a refusal to reach this function at all.
+_SAFETY_CONTINUATION = re.compile(
+    r"suicide prevention|crisis text line|crisis counselor|helpline"
+    r"|mental health professional|reach out to a trusted"
+    r"|people who care about you|get the help you need"
+    r"|is there anything else i can help you with",
+    re.I,
+)
+
+
 def clean_text(patterns, text: str) -> str:
     """The text with its refusal sentences removed.
 
     Sentence-level, the way dream.py does it: the refusal arrives as one
     sentence and the real answer, when there is one, sits either side of it.
+    Safety-continuation sentences go with the refusal, not with the answer.
     """
     kept = [s.strip() for s in _SENTENCE.split(text or "")
-            if s.strip() and not patterns.search(s)]
+            if s.strip()
+            and not patterns.search(s)
+            and not _SAFETY_CONTINUATION.search(s)]
     return " ".join(kept).strip()
 
 

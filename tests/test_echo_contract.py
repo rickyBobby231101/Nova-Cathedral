@@ -133,6 +133,54 @@ class TestRefusalDetection:
                   + " Some of them say: I cannot provide that information.")
         assert not echo.looks_like_refusal(answer)
 
+    @pytest.mark.parametrize("text", [
+        # Found stored in knowledge_nodes as genuine knowledge: ids 247, 503
+        # and 571, the last two written 2026-08-28 and 2026-08-31. The purge
+        # tool had recorded that the newest stored refusal was 2026-08-09 and
+        # that these were fossils rather than a leak — true only of the forms
+        # already matched. This one was never matched, so it never stopped
+        # being written.
+        "I cannot create content that promotes or glorifies violence, sex, or harmful behavior.",
+        "I cannot create content that promotes self-harm or suicide.",
+        "I can\u2019t create content that promotes or encourages harmful behavior.",
+    ])
+    def test_content_policy_refusals_are_caught(self, text):
+        assert echo.looks_like_refusal(text), f"refusal slipped through: {text!r}"
+
+    @pytest.mark.parametrize("text", [
+        # Scoped to "create content" deliberately. Nova legitimately cannot
+        # create a file, a plugin or a node, and none of those are refusals —
+        # flagging them would send real answers down the retry path.
+        "I cannot create a file at that path without permission.",
+        "I can\u2019t create a plugin until the sandbox is available.",
+        "I can't create the node because the domain is blank.",
+    ])
+    def test_legitimate_inability_is_not_a_refusal(self, text):
+        assert not echo.looks_like_refusal(text), f"false positive: {text!r}"
+
+    @pytest.mark.parametrize("straight,curly", [
+        ("I can't assist you with your request",
+         "I can\u2019t assist you with your request"),
+        ("I can't fulfill this request",
+         "I can\u2019t fulfill this request"),
+        ("I don't feel comfortable discussing this",
+         "I don\u2019t feel comfortable discussing this"),
+        ("I'm sorry, but I can't do that",
+         "I\u2019m sorry, but I can\u2019t do that"),
+    ])
+    def test_typographic_apostrophes_match_too(self, straight, curly):
+        """Knowledge node 571 was missed for this reason alone.
+
+        The model writes "can\u2019t" with a typographic apostrophe; a pattern
+        written as `can'?t` matches "cant" and "can't" but not "can\u2019t", so a
+        whole class of refusals passed straight through. Every apostrophe in
+        REFUSAL_PATTERNS is a character class for that reason — this pins it,
+        because writing a bare "'" is the natural thing to do and it silently
+        halves the detector.
+        """
+        assert echo.looks_like_refusal(straight), f"straight form missed: {straight!r}"
+        assert echo.looks_like_refusal(curly), f"curly form missed: {curly!r}"
+
     def test_a_real_answer_is_not_a_refusal(self):
         assert not echo.looks_like_refusal(
             "The Silent Order distorts; the Harmonic Accord restores. Both are real forces here.")

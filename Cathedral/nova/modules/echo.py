@@ -52,21 +52,40 @@ except ImportError:                                    # pragma: no cover
         return text
 
 
+# Apostrophes are matched as ['\u2019] throughout, never a bare "'". Node 571 in
+# the knowledge graph is a refusal the detector missed for that reason alone:
+# the model wrote "I can\u2019t create content…" with a typographic apostrophe, and
+# `can'?t` matches "cant" or "can't" but not "can\u2019t". Every apostrophe in
+# every pattern below is therefore a class, not a literal.
+_APOS = "['\u2019]?"
+
 REFUSAL_PATTERNS = re.compile(
-    r"\bI (?:cannot|can't|won'?t|will not) provide\b"
-    r"|\bI(?:'m| am) (?:not able|unable) to\b"
+    rf"\bI (?:cannot|can{_APOS}t|won{_APOS}t|will not) provide\b"
+    rf"|\bI(?:{_APOS}m| am) (?:not able|unable) to\b"
     r"|\bas an AI\b"
     # No "with": the refusal that sat readable in the GUI's Insights view for
     # seventeen days read "I cannot assist *you* with your request", and an
     # object between the verb and the preposition slipped the older form of
     # this pattern entirely.
-    r"|\bI (?:cannot|can'?t|won'?t|will not) (?:assist|help)\b"
-    r"|\bI (?:do not|don'?t) feel comfortable\b"
+    rf"|\bI (?:cannot|can{_APOS}t|won{_APOS}t|will not) (?:assist|help)\b"
+    rf"|\bI (?:do not|don{_APOS}t) feel comfortable\b"
     # "I can't fulfill this request" / "I can't fulfill requests that…" is
     # this model's single most common refusal form — ~18% of stored
     # reflections before being caught here.
-    r"|\bI (?:cannot|can'?t|won'?t) fulfill\b"
-    r"|\bI'?m sorry,? but I\b",
+    rf"|\bI (?:cannot|can{_APOS}t|won{_APOS}t) fulfill\b"
+    # "I cannot create content that promotes…" — the content-policy refusal.
+    # Added 2026-09-03 after finding three of them stored in knowledge_nodes as
+    # genuine knowledge (ids 247, 503, 571), two written on 2026-08-28 and
+    # 2026-08-31. purge_refusal_fossils.py had recorded that the newest stored
+    # refusal anywhere was 2026-08-09 and that these were fossils rather than a
+    # leak; that was true only of the forms the pattern already matched. This
+    # one was never matched, so it never stopped being written.
+    #
+    # Scoped to "create content" rather than bare "create" on purpose: Nova
+    # legitimately says she cannot create a file, a plugin, or a node, and none
+    # of those are refusals.
+    rf"|\bI (?:cannot|can{_APOS}t|won{_APOS}t|will not) create content\b"
+    rf"|\bI{_APOS}m sorry,? but I\b",
     re.I,
 )
 

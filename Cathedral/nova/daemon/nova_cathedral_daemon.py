@@ -1470,7 +1470,15 @@ class NovaConsciousness:
         "unique applied connected linked individual individuals effective "
         "crucial potentially particularly rich incorporating refine refined "
         "hidden challenges recognizing ourselves leading embracing intriguing "
-        "nuanced work next".split()
+        "nuanced work next "
+        # a fourth pass, 2026-09-03. The third pass named "Pattern: make" in
+        # its own comment as an example of what it was filtering, then added
+        # "work next" and never added "make" — so the live graph still held a
+        # "Pattern: make" insight node, along with "Pattern: solid". Both are
+        # connective verbs and evaluative adjectives, exactly the class the
+        # third pass described. Found by auditing the 44 stored insight nodes
+        # against this list rather than by another live scan.
+        "make solid".split()
     )
     # 0.25 let the corpus's own connective tissue through: measured on the live
     # graph 2026-08-26, the top motifs were "relationships", "might", "used",

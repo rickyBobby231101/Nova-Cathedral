@@ -21,6 +21,18 @@ def test_evaluative_filler_is_not_a_motif(nova):
         assert w in nova._EYEMOEBA_STOPWORDS, f"{w} would still rank as a motif"
 
 
+def test_the_words_this_files_own_docstring_names_are_filtered(nova):
+    """"make" was named in the stopword list's third-pass comment as an example
+    of what it was filtering, and then not added — the live graph still held a
+    "Pattern: make" insight node on 2026-09-03, next to "Pattern: solid".
+
+    A comment describing intent is not the same as the intent being
+    implemented, and nothing was checking the two against each other.
+    """
+    for w in ("make", "solid", "crucial", "ourselves"):
+        assert w in nova._EYEMOEBA_STOPWORDS, f"{w} would still rank as a motif"
+
+
 def test_subject_matter_is_still_allowed_through(nova):
     """The stopword passes must not eat the actual subjects of the corpus."""
     for w in ("harmony", "fractal", "network", "mechanics", "language",
