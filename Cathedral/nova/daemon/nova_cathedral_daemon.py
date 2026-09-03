@@ -1477,7 +1477,18 @@ class NovaConsciousness:
         # a second pass, after tightening the ubiquity cap let the next layer
         # of filler surface (live scan 2026-08-26)
         "provide provided making made using used might well take taken "
-        "recognize exhibit continue gained strive investigate challenging".split()
+        "recognize exhibit continue gained strive investigate challenging "
+        # a third pass. After the second, the ranking still descended into
+        # evaluative adjectives and connective verbs once the real subject
+        # terms were used up, and synthesized on them: the live graph on
+        # 2026-09-01 held insight nodes titled "Pattern: crucial", "Pattern:
+        # ourselves", "Pattern: make". Those are the corpus praising itself,
+        # not a pattern in it — and each one costs ~160s and then feeds the
+        # next scan's vocabulary.
+        "unique applied connected linked individual individuals effective "
+        "crucial potentially particularly rich incorporating refine refined "
+        "hidden challenges recognizing ourselves leading embracing intriguing "
+        "nuanced work next".split()
     )
     # 0.25 let the corpus's own connective tissue through: measured on the live
     # graph 2026-08-26, the top motifs were "relationships", "might", "used",
@@ -1488,6 +1499,16 @@ class NovaConsciousness:
     # cognitive, learning, light, complexity -- subject matter.
     _EYEMOEBA_MAX_UBIQUITY = 0.12
     _EYEMOEBA_MIN_DOMAINS  = 2
+    # How far down the ranking synthesis will go. The list is ordered by
+    # strength, so quality falls as it descends; once the strong motifs are
+    # explained, continuing means synthesizing on whatever filler survived the
+    # stopwords. Producing nothing beats producing noise — and nothing is not
+    # permanent, since the graph grows new motifs on its own.
+    _EYEMOEBA_MOTIF_DEPTH  = 10
+    # Recent loop errors, for the self-review to actually have evidence.
+    # Deliberately in memory and bounded: this is a hint for the next review,
+    # not an audit trail, and the journal already keeps the real record.
+    _RECENT_ERROR_LIMIT = 20
 
     def _eyemoeba_analyze(self) -> list[dict]:
         """Scan knowledge_nodes for cross-domain motifs. Pure + synchronous."""
@@ -1681,6 +1702,11 @@ class NovaConsciousness:
         """The strongest cross-domain motif (most domains, then most nodes)
         that has no insight node yet. None if all top motifs are explained.
 
+        Only the top _EYEMOEBA_MOTIF_DEPTH are considered. Searching the whole
+        list guarantees a result, which sounds like the point and is not: the
+        ranking degrades as it descends, so it guarantees a result about the
+        weakest term available.
+
         Motifs that have already failed this run are skipped. Without that the
         loop is a livelock: the ranking is deterministic, so a motif whose
         synthesis fails is still the top unexplained motif six cycles later, and
@@ -1692,7 +1718,7 @@ class NovaConsciousness:
         Deliberately in memory: a restart is a fair moment to try again, since
         the usual cause of failure is a transient timeout.
         """
-        for m in self.eyemoeba_motifs_list(n=25):
+        for m in self.eyemoeba_motifs_list(n=self._EYEMOEBA_MOTIF_DEPTH):
             if m["term"] in self._eyemoeba_failed_motifs:
                 continue
             if len(m["domains"]) >= 2 and not self._motif_has_insight(m["term"]):
@@ -2262,9 +2288,22 @@ class NovaConsciousness:
 
     # ── knowledge graph ───────────────────────────────────────────────────────
 
+    DEFAULT_DOMAIN = "general"
+
     def _knowledge_add(self, domain: str, label: str, content: str,
                        source: str = "nova", weight: float = 1.0) -> int:
-        """Add a node to the knowledge graph. Returns node id."""
+        """Add a node to the knowledge graph. Returns node id.
+
+        A blank domain is normalized here rather than at the callers. The
+        socket handler used `d.get("domain", "general")`, and a .get default
+        fires only when the key is ABSENT — an explicit "" went straight
+        through. Twelve such nodes reached the live graph, where they render
+        as "Pattern: neural across , Artificial Intelligence" and had to be
+        specially skipped by the motif scan. Guarding the one place every
+        node passes through costs nothing and cannot be forgotten by the
+        next caller.
+        """
+        domain = (domain or "").strip() or self.DEFAULT_DOMAIN
         with sqlite3.connect(self.db_path) as con:
             cur = con.execute(
                 "INSERT INTO knowledge_nodes (domain, label, content, source, weight, created) "
@@ -3155,6 +3194,7 @@ class NovaConsciousness:
 
             except Exception as e:
                 logging.error(f"Autonomous evolution error: {e}")
+                self._note_error("evolution loop", e)
                 if _EVO_AVAILABLE:
                     try:
                         heal = await asyncio.to_thread(
@@ -3446,6 +3486,15 @@ class NovaConsciousness:
             _mark_pending_verify(write_result["path"], write_result["backup"])
         return {**write_result, "intent": intent, "lines": len(new_content.splitlines())}
 
+    def _note_error(self, where: str, exc: Exception):
+        """Remember a loop failure so the next self-review has real evidence."""
+        if not hasattr(self, "_recent_errors"):
+            self._recent_errors = []
+        entry = f"{where}: {type(exc).__name__}: {exc}"[:200]
+        if entry not in self._recent_errors:
+            self._recent_errors.append(entry)
+        del self._recent_errors[:-self._RECENT_ERROR_LIMIT]
+
     async def _self_code_review(self):
         """Nova reads her own source, suggests one improvement, and applies it.
         Uses the same backup + syntax-check safety net as manual self_evolve —
@@ -3458,14 +3507,47 @@ class NovaConsciousness:
                 f"({self.harmony_score:.2f}) to trust self-modification right now")
             return
         try:
-            src     = await asyncio.to_thread(read_nova_source)
-            issues  = []   # could track logged errors here in future
-            prompt  = _evo.build_self_improvement_prompt(src["files"], issues)
-            result  = await self._ollama_chat([{"role": "user", "content": prompt}])
+            src = await asyncio.to_thread(read_nova_source)
+
+            # Show her real code, rotate the window, and skip files she has
+            # already proposed against without anything being applied. Without
+            # the skip she returned to plugins/oracle_module.py 71 times.
+            skip     = await asyncio.to_thread(_evo.overproposed_files, self.db_path)
+            offset   = await asyncio.to_thread(_evo.proposal_count, self.db_path)
+            reviewed = _evo.files_for_review(src["files"], skip=skip, offset=offset)
+            if not reviewed:
+                return
+            recent = await asyncio.to_thread(_evo.get_improvements, self.db_path, 8)
+            issues = list(getattr(self, "_recent_errors", []))
+
+            prompt  = _evo.build_self_improvement_prompt(reviewed, issues, recent)
+            # Background work on a slow box: the default 180s is a chat
+            # budget, and reading code is slower than answering a question.
+            result  = await self._ollama_chat(
+                [{"role": "user", "content": prompt}], timeout=300)
             if "error" in result:
+                return
+            if result["response"].strip().upper().startswith("NOTHING"):
+                logging.info("Self-review found nothing worth changing — "
+                             f"declined on {', '.join(n for n, _ in reviewed)}")
                 return
             imp = _evo.parse_improvement_from_response(result["response"])
             if not imp.get("improvement"):
+                return
+            # A proposal about a file she was not shown is free association,
+            # which is exactly what produced the oracle_module backlog.
+            shown = {n for n, _ in reviewed}
+            target_file = str(imp.get("file", "")).strip()
+            if target_file and target_file not in shown:
+                logging.info(f"Self-improvement discarded — names '{target_file}', "
+                             f"which was not in this review")
+                return
+            # And the quote has to be real. A proposal built on invented code
+            # would be applied to the code that is actually there.
+            if not _evo.evidence_is_real(imp.get("evidence", ""), reviewed):
+                logging.info("Self-improvement discarded — its evidence "
+                             f"({str(imp.get('evidence',''))[:60]!r}) does not "
+                             "appear in the reviewed source")
                 return
             imp_id = _evo.store_improvement(self.db_path, imp)
             logging.info(f"Self-improvement noted: {imp['improvement'][:60]}")
@@ -4406,7 +4488,7 @@ class NovaConsciousness:
 
         # ── knowledge graph ───────────────────────────────────────────────────
         elif cmd == "knowledge_add":
-            domain  = d.get("domain", "general")
+            domain  = (d.get("domain") or "").strip() or self.DEFAULT_DOMAIN
             label   = d.get("label", d.get("title", ""))
             content = d.get("content", "")
             source  = d.get("source", "chazel")
@@ -5663,6 +5745,7 @@ class NovaConsciousness:
                 await asyncio.sleep(300)
             except Exception as e:
                 logging.error(f"Eyemoeba error: {e}")
+                self._note_error("eyemoeba loop", e)
                 await asyncio.sleep(600)
 
     async def harmonic_resonance_tracker(self):

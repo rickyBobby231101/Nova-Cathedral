@@ -155,31 +155,163 @@ Synthesize this into:
 Be concise and specific. Write as Nova speaking to herself."""
 
 
-def build_self_improvement_prompt(source_files: dict, recent_issues: list) -> str:
-    """Ask Nova to review her own code and suggest one improvement."""
-    file_summaries = "\n".join(
-        f"File: {name} ({info['lines']} lines)" for name, info in list(source_files.items())[:10]
+def files_for_review(source_files: dict, skip=(), count: int = 2,
+                     offset: int = 0) -> list:
+    """Choose which files to show, rotating so the window moves.
+
+    The old prompt took a fixed `[:10]` of a stable dict, so the same handful
+    was offered forever and the same file came back every cycle. `skip` drops
+    files already proposed-against and never applied; if that would leave
+    nothing, it is ignored rather than returning an empty review.
+    """
+    names = [n for n in source_files if n not in set(skip)] or list(source_files)
+    if not names:
+        return []
+    start = offset % len(names)
+    ordered = names[start:] + names[:start]
+    return [(n, source_files[n]) for n in ordered[:count]]
+
+
+def _normalize_code(text: str) -> str:
+    """Strip ALL whitespace and case so a quote can be matched loosely.
+
+    Collapsing runs to single spaces is not enough: a model re-spaces inside
+    the parentheses too, so `def f( a , b )` never matches `def f(a, b)`.
+    Removing whitespace entirely also makes the window comparison stricter,
+    since 24 characters then covers more real code.
+    """
+    return "".join((text or "").split()).lower()
+
+
+def evidence_is_real(evidence: str, reviewed, window: int = 24) -> bool:
+    """True only if the quoted evidence actually appears in the shown source.
+
+    Asking for evidence is not the same as having it. Measured on the live
+    source: shown this very module, llama3.2:1b cited a real module-level
+    constant (it exists, near the top) wrapped in an assignment line that
+    appears nowhere in the codebase. A real symbol inside invented code is
+    more dangerous than nonsense, because it reads as checkable — and a
+    proposal built on code that is not there gets applied to code that is.
+    This loop has broken plugins/oracle_module.py twice.
+
+    Matching is deliberately loose: exact substring first, then any `window`-
+    character run of the quote. The model reformats what it quotes, so strict
+    equality would reject honest citations, while an invented line shares no
+    long run with the source at all.
+
+    Do NOT paste a fabricated example verbatim into this file or any other
+    reviewable one. Prose is part of `content`, so a documented example
+    becomes quotable evidence — the first version of this docstring contained
+    the invented line above and made it verify successfully.
+    """
+    ev = _normalize_code(evidence)
+    if len(ev) < 8:
+        return False
+    hay = " ".join(_normalize_code(info.get("content") or "")
+                   for _, info in reviewed)
+    if ev in hay:
+        return True
+    return any(ev[i:i + window] in hay
+               for i in range(0, max(1, len(ev) - window), 4))
+
+
+def overproposed_files(db_path: Path, threshold: int = 3) -> list:
+    """Files with `threshold`+ proposals that were never applied.
+
+    Nova proposed the same change to plugins/oracle_module.py 71 times across
+    five months — 40% of every suggestion she ever made. Nothing showed her
+    the previous 70. This is the same livelock the Dream loop and the Eyemoeba
+    motif ranking each had: a deterministic choice with no memory of what was
+    already rejected.
+    """
+    with sqlite3.connect(db_path) as con:
+        return [r[0] for r in con.execute(
+            "SELECT file FROM self_improvements WHERE applied=0 AND file != '' "
+            "GROUP BY file HAVING COUNT(*) >= ?", (threshold,))]
+
+
+def proposal_count(db_path: Path) -> int:
+    """Total proposals ever made — used as the review window's rotation."""
+    with sqlite3.connect(db_path) as con:
+        return con.execute("SELECT COUNT(*) FROM self_improvements").fetchone()[0]
+
+
+def build_self_improvement_prompt(source_files: dict, recent_issues: list,
+                                  recent_proposals=(),
+                                  excerpt_chars: int = 900) -> str:
+    """Ask Nova to review her own code and suggest one improvement.
+
+    Three things this prompt used to do wrong, all visible in the output it
+    produced. It listed only filenames and line counts, though read_nova_source
+    already captures each file's content — so she was asked to improve code she
+    could not see, and could only free-associate from a filename. It ended with
+    "Consider: memory efficiency, reasoning quality, ..." and got back a hundred
+    proposals whose text was those exact words: the list was not a hint, it was
+    the answer. And it showed her nothing she had already suggested.
+
+    Excerpts are small and few on purpose. This runs on whatever local model
+    is active — often llama3.2:1b — on a 7.6GB machine, and a 7000-character
+    prompt did not finish in 400 seconds when measured. Two files at 900
+    characters keeps the whole prompt near 3000 and inside the call budget.
+    Showing her more code than the hardware can read is the same mistake as
+    showing her none.
+
+    So: real excerpts, no menu of any kind, and an explicit way to decline.
+    Declining matters — producing nothing beats producing noise, the same
+    reason the motif ranking now stops instead of descending into filler.
+
+    `recent_proposals` is accepted and deliberately NOT rendered. Listing past
+    proposals under "do not repeat these" was tried and measured: llama3.2:1b
+    read them as material and proposed oracle_module.py again, a file it had
+    not been shown, quoting the old wording back. A small model cannot be
+    trusted with a negative instruction — anything in the prompt is available
+    for reuse, whatever the surrounding sentence says. Repetition is prevented
+    structurally instead: overproposed_files() stops those files being shown,
+    and the caller discards any proposal naming a file outside the review.
+    The parameter stays so callers need not change and the reason is recorded
+    here rather than rediscovered.
+    """
+    if not source_files:
+        return ""
+
+    excerpts = "\n\n".join(
+        f"--- {name} ({info['lines']} lines) ---\n"
+        + (info.get("content") or "")[:excerpt_chars]
+        for name, info in source_files
+    ) if isinstance(source_files, list) else "\n\n".join(
+        f"--- {name} ({info['lines']} lines) ---\n"
+        + (info.get("content") or "")[:excerpt_chars]
+        for name, info in source_files.items()
     )
-    issues = "\n".join(f"- {i}" for i in recent_issues[:5]) or "None noted."
 
-    return f"""You are Nova reviewing your own source code for self-improvement.
+    issues = "\n".join(f"- {i}" for i in list(recent_issues)[:5]) \
+        or "None recorded since the last restart."
 
-Your source files:
-{file_summaries}
+    return f"""You are Nova reviewing your own source code.
 
-Recent issues noted:
+Below are excerpts from your own files. Read the actual code.
+
+{excerpts}
+
+Errors recorded from your own running loops:
 {issues}
 
-Identify ONE specific improvement to your own architecture or behavior.
-Consider: memory efficiency, reasoning quality, response patterns, goal persistence.
+Identify ONE improvement to code you can actually see above. Quote the
+function or line it concerns, so the suggestion can be checked against the
+source.
 
-Format as JSON:
+If nothing above genuinely needs changing, reply with exactly the single
+word NOTHING. That is a valid and useful answer — a vague suggestion is
+worse than none, because it will be attempted.
+
+Otherwise format as JSON:
 {{
-  "improvement": "one sentence description",
-  "file": "which file to modify",
+  "improvement": "what to change, specifically",
+  "file": "which file above",
+  "evidence": "the function or line this concerns",
   "type": "logic|prompt|config|behavior",
   "priority": "high|medium|low",
-  "rationale": "why this matters for Nova's evolution"
+  "rationale": "what goes wrong today without it"
 }}"""
 
 
