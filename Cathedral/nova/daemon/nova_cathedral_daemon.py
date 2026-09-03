@@ -3322,8 +3322,20 @@ class NovaConsciousness:
     async def _process_goal(self, goal: dict):
         """Execute one goal — research it and store the finding."""
         gid    = goal["id"]
-        method = goal["method"]
         text   = goal["goal"]
+        # Resolve the method from what the goal asks for. Two measured
+        # failures live here: 48 goals carry model-invented method names that
+        # match no branch below, so context stays empty and they fail without
+        # exception (0 completed, 48 failed); and `method` defaults to
+        # 'reflect' in the schema, which researches by recalling past
+        # conversations — unanswerable for "study X", and the reason every
+        # goal Chazel ever set had failed. web_search runs 163/169 here
+        # against reflect's 160/312.
+        stored = goal["method"]
+        method = _evo.resolve_method(stored, text, _WEB_SEARCH_AVAILABLE) \
+            if _EVO_AVAILABLE else stored
+        if method != stored:
+            logging.info(f"Goal method {stored!r} → {method!r} for: {text[:45]}")
         logging.info(f"Processing goal [{method}]: {text[:60]}…")
 
         context = ""
@@ -3347,8 +3359,20 @@ class NovaConsciousness:
                 )
 
             elif method == "reflect":
-                # Use existing memories as context
-                mems    = self.recall_memories(query=goal.get("domain",""), n=5)
+                # Recall by what the goal is ABOUT, not by its domain label.
+                # domain is a category for Nova's own goals ("Quantum
+                # Mechanics") but a SOURCE for Chazel's ("user"), so searching
+                # it returned memories containing the word "user" — an SSH
+                # question and "Testing testing" — as the research context for
+                # "study stoisism". Try the goal text first, fall back to the
+                # domain, then to whatever is most recent.
+                mems = self.recall_memories(query=text, n=5)
+                if not mems:
+                    label = (goal.get("domain") or "").strip()
+                    if label and label != "user":
+                        mems = self.recall_memories(query=label, n=5)
+                if not mems:
+                    mems = self.recall_memories(n=5)
                 context = "\n".join(f"Q: {m['q']}\nA: {m['a'][:300]}" for m in mems)
 
             elif method == "self_read" and _FS_AVAILABLE:

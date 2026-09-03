@@ -15,6 +15,7 @@ This runs as a background daemon task — Nova evolves without being asked.
 
 import json
 import random
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -153,6 +154,61 @@ Synthesize this into:
 4. A confidence assessment (high/medium/low) on the quality of this knowledge
 
 Be concise and specific. Write as Nova speaking to herself."""
+
+
+VALID_METHODS = ("web_search", "file_read", "reflect", "self_read", "code")
+
+# Wanting to LEARN something: the subject is by definition not already in the
+# conversation history, so recalling memories cannot answer it.
+_LEARN_RE = re.compile(
+    r"\b(stud(y|ying)|learn|research|read about|find out|look up|what is|"
+    r"what are|who is|who was|how does|how do|why does|explain|define|"
+    r"explore|investigate|compare|analy[sz]e|discuss)\b", re.I)
+# About her own code or improvement.
+_SELF_RE = re.compile(
+    r"\b(your own|yourself|your source|your code|own source|own code|"
+    r"self[\s_-]?improv\w*|self[\s_-]?read)", re.I)
+# About files on this machine.
+_FILE_RE = re.compile(
+    r"\b(files? on this system|this repo|read the files?|local files?|"
+    r"on disk|in this director)\b", re.I)
+
+
+def infer_method(goal: str, web_available: bool = True) -> str:
+    """Pick a research method from what the goal actually asks for."""
+    g = goal or ""
+    if _SELF_RE.search(g):
+        return "self_read"
+    if _FILE_RE.search(g):
+        return "file_read"
+    if _LEARN_RE.search(g) and web_available:
+        return "web_search"
+    return "reflect"
+
+
+def resolve_method(stored: str, goal: str, web_available: bool = True) -> str:
+    """The method a goal should actually run under.
+
+    Two failures this repairs, both measured on the live table.
+
+    48 goals carry method names the model invented — quantum_computing,
+    poetic_computation, "literature review", "web_search|file_read" — which
+    match no branch in _process_goal, so context stays empty and the goal
+    fails with "No context gathered". 0 completed, 48 failed, guaranteed by
+    construction. Those are re-inferred.
+
+    And `method` defaults to 'reflect' in the schema, so a goal added without
+    one researches by recalling past conversations. Every goal Chazel has set
+    is 'reflect', and every one had failed: "study stoisism" cannot be
+    answered from a history that never mentions Stoicism. Success on the live
+    table is web_search 163/169 against reflect 160/312. So a stored 'reflect'
+    is treated as the default it almost always is, and an explicit learn verb
+    overrides it. An explicitly chosen non-reflect method is always kept.
+    """
+    m = (stored or "").strip().lower()
+    if m in VALID_METHODS and m != "reflect":
+        return m
+    return infer_method(goal, web_available)
 
 
 def build_neutral_research_prompt(goal: str, context: str) -> str:
