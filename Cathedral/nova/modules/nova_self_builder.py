@@ -85,10 +85,24 @@ def syntax_check(path: str) -> dict:
 
 
 def _backup(path: str) -> str:
-    """Create a timestamped backup of a file. Returns backup path."""
+    """Create a timestamped backup of a file. Returns backup path.
+
+    Microseconds, not seconds. The timestamp was "%Y%m%d_%H%M%S" until
+    2026-09-03, which meant two writes to the same file inside the same second
+    produced the *same* backup filename and shutil.copy2 silently overwrote the
+    first one. The consequence is worse than losing a backup: the surviving
+    file then holds the intermediate state, so revert() restores the change it
+    was meant to undo. apply_patch and inject_after both route through
+    write_source, so any pair of them in sequence hits this.
+
+    The format still sorts correctly for revert(), which takes the
+    lexicographically last match of "{stem}__*.py": the microsecond field is
+    fixed-width and appended after the seconds, and "_" sorts above "." so a
+    new-format backup correctly outranks a same-second old-format one.
+    """
     p = Path(path)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts      = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     bk_name = f"{p.stem}__{ts}{p.suffix}"
     bk_path = BACKUP_DIR / bk_name
     shutil.copy2(p, bk_path)
