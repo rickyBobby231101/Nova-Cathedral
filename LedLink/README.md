@@ -59,10 +59,11 @@ app/src/main/java/com/ledlink/app/
 
 ## Building and running
 
-This was written in an environment without a full Android SDK/emulator available, so it has
-**not** been built or run on-device yet — the Gradle scripts, manifest, and Kotlin sources
-follow standard, current Android/Compose APIs, but treat it as an unverified first pass and
-expect to fix small build issues on first import.
+This builds cleanly with `./gradlew assembleDebug` (verified end-to-end against Android SDK
+platform 34 / build-tools 34.0.0, zero warnings from this project's own code) and produces an
+installable `app-debug.apk`. It has not been run on a physical phone yet — BLE devices vary,
+so treat the `Nearby` tab's exact protocol bytes as a starting point per the troubleshooting
+note below, not a guarantee against every clone controller.
 
 1. Open the `LedLink/` folder in Android Studio (Koala/2024.1 or newer).
 2. Let it sync — it will resolve dependencies from Google/Maven Central automatically.

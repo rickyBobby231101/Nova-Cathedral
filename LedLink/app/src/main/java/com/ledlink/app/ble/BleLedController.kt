@@ -71,6 +71,9 @@ class BleLedController(private val context: Context) {
         write(MagicHomeProtocol.setPower(on))
     }
 
+    // The (characteristic, value, writeType) overload requires API 33; setValue+writeCharacteristic(char)
+    // is deprecated but is the only path that also works down to minSdk 26.
+    @Suppress("DEPRECATION")
     @SuppressLint("MissingPermission")
     private fun write(bytes: ByteArray) {
         val g = gatt ?: return
