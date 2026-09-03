@@ -328,7 +328,9 @@ _PREAMBLE_RE = re.compile(
     r"i'?m nova\b[^\n]*|i'?m synthesi[sz]\w*[^\n]*|i'?ll synthesi[sz]\w*[^\n]*|"
     r"i'?ll review[^\n]*|i'?d be (?:happy|delighted|glad)[^\n]*|"
     r"i'?m (?:so )?excited[^\n]*|i can provide[^\n]*|"
-    r"here'?s (?:a|the|my) (?:synthesis|summary|response)[^\n]*|"
+    r"here'?s (?:a|an|the|my)\b[^\n]*?"
+    r"(?:synthesis|summary|response|analysis|breakdown|overview)[^\n]*|"
+    r"i'?ve (?:analy[sz]ed|reviewed|read|looked at|gone through)[^\n]*|"
     r"here'?s a json[^\n]*|as nova[^\n]*|let me [^\n]*|"
     r"sure[,!.][^\n]*|certainly[,!.][^\n]*|of course[,!.][^\n]*"
     r")\n+", re.I)

@@ -75,3 +75,34 @@ def test_stacked_preambles_are_removed():
 def test_empty_input_is_safe():
     assert evo.strip_preamble("") == ""
     assert evo.strip_preamble(None) == ""
+
+
+# ── the openings that survived the first fix ─────────────────────────────
+
+BODY = ("\n\n**Key insights:**\n* The first substantive point of the answer, "
+        "long enough to be a real body rather than a fragment.")
+
+SURVIVED_FIRST_FIX = [
+    "Here's an analysis of the sources:",
+    "I've analyzed both files and identified some self-improvement insights:",
+    "Here's a concise response based on the provided sources:",
+    "I'd be happy to help you synthesize this research.",
+]
+
+
+def test_openings_seen_after_the_prompt_fix_are_also_stripped():
+    """Removing the self-description from the prompt killed "I'm Nova,
+    synthesizing research for autonomous self-improvement" but not the
+    generic assistant preamble underneath it. These are the exact openings
+    goals 3, 4 and 5 produced on 2026-09-02 after that change went live."""
+    for opening in SURVIVED_FIRST_FIX:
+        out = evo.strip_preamble(opening + BODY)
+        assert out.startswith("**Key insights:**"), opening
+
+
+def test_the_floor_still_protects_a_short_body():
+    """Every one of the above initially looked like a pattern miss and was
+    the 80-character floor doing its job on an unrealistically short body.
+    The floor matters more than the trim."""
+    short = "Here's an analysis of the sources:\n\n* one short point."
+    assert evo.strip_preamble(short) == short
