@@ -1509,6 +1509,14 @@ class NovaConsciousness:
     # Deliberately in memory and bounded: this is a hint for the next review,
     # not an audit trail, and the journal already keeps the real record.
     _RECENT_ERROR_LIMIT = 20
+    # Last-resort models for a refusal that plain phrasing did not clear.
+    # Only the first is used: llama3.2:3b has been measured timing out past
+    # 240s on a cold load here, so escalation is a fallback, not the remedy.
+    # The remedy is dropping the self-referential framing — see
+    # _retry_past_refusal. This matters because "study stoisism" and "learn
+    # about gnostic" were two of only eight goals Chazel has ever set himself,
+    # and every one of his had failed.
+    _REFUSAL_ESCALATION = ("llama3.2:3b", "qwen3:4b", "gemma3:4b")
 
     def _eyemoeba_analyze(self) -> list[dict]:
         """Scan knowledge_nodes for cross-domain motifs. Pure + synchronous."""
@@ -3375,12 +3383,22 @@ class NovaConsciousness:
 
             _, synthesis = self._parse_reasoning(result["response"])
             if self._looks_like_refusal(synthesis):
-                _evo.fail_goal(self.db_path, gid, "Model declined to answer (safety refusal)")
-                logging.info(f"Goal hit a refusal, not stored as knowledge: {text[:50]}")
-                await self._ask_chazel_about_dead_end(gid, text)
-                return
+                retried, used = await self._retry_past_refusal(text, context)
+                if retried:
+                    logging.info(f"Refusal cleared by {used}: {text[:50]}")
+                    synthesis = retried
+                else:
+                    _evo.fail_goal(self.db_path, gid,
+                                   "Model declined to answer (safety refusal)")
+                    logging.info(f"Goal hit a refusal, not stored as knowledge: {text[:50]}")
+                    await self._ask_chazel_about_dead_end(gid, text)
+                    return
             _evo.complete_goal(self.db_path, gid, synthesis)
-            domain = goal.get("domain", "general")
+            # .get's default fires only on a MISSING key, so a goal carrying
+            # domain='' passed "" straight to append_knowledge — which built
+            # the filename ".md", the file the Weaver skips as a dotfile and
+            # where 57 research entries went unread for four months.
+            domain = (goal.get("domain") or "").strip() or self.DEFAULT_DOMAIN
             _evo.store_knowledge(self.db_path, domain,
                                  synthesis, source=method, goal_id=gid)
             if _FS_AVAILABLE:
@@ -3485,6 +3503,39 @@ class NovaConsciousness:
                                       delta=0.08, description=f"Evolved: {path}")
             _mark_pending_verify(write_result["path"], write_result["backup"])
         return {**write_result, "intent": intent, "lines": len(new_content.splitlines())}
+
+    async def _retry_past_refusal(self, goal_text: str, context: str):
+        """Re-ask a refused question plainly. Returns (text, how) or (None, None).
+
+        The refusal is usually about the framing, not the subject: the normal
+        research prompt casts her as an AI pursuing autonomous self-improvement
+        and asks how the findings touch her own consciousness, which is the
+        shape a small model's safety training reacts to. So the first retry
+        drops the framing and keeps the model — cheap, and it addresses the
+        measured cause. Only if that is refused too is a larger model tried,
+        and only one, because a 3B cold load has been measured past 240s here.
+        """
+        neutral = _evo.build_neutral_research_prompt(goal_text, context)
+
+        result = await self._ollama_chat([{"role": "user", "content": neutral}],
+                                         timeout=300)
+        if "error" not in result:
+            _, text = self._parse_reasoning(result["response"])
+            if text and not self._looks_like_refusal(text):
+                return text, "plain phrasing"
+
+        current = self._active_model()
+        for model in self._REFUSAL_ESCALATION[:1]:
+            if model == current:
+                continue
+            result = await self._ollama_chat(
+                [{"role": "user", "content": neutral}], model=model, timeout=300)
+            if "error" in result:
+                continue
+            _, text = self._parse_reasoning(result["response"])
+            if text and not self._looks_like_refusal(text):
+                return text, model
+        return None, None
 
     def _note_error(self, where: str, exc: Exception):
         """Remember a loop failure so the next self-review has real evidence."""

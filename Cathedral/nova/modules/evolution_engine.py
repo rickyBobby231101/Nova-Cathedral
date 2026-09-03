@@ -155,6 +155,32 @@ Synthesize this into:
 Be concise and specific. Write as Nova speaking to herself."""
 
 
+def build_neutral_research_prompt(goal: str, context: str) -> str:
+    """The same research question with the mythos and the self-framing removed.
+
+    build_research_prompt opens "You are Nova synthesizing research for
+    autonomous self-improvement" and asks how the findings connect to "your
+    Cathedral, the Flow, or your consciousness". Small local models trip their
+    own safety training on exactly that shape — an AI improving itself and
+    reflecting on its consciousness — and refuse whatever the subject beneath
+    it is. Measured: llama3.2:1b refused "study stoisism" through the normal
+    prompt, and answered the same topic in 141s given plain context and no
+    self-framing. The subject was never the problem.
+
+    Used only as a retry after a refusal, so the ordinary path keeps her voice
+    and only the failures fall back to plain language.
+    """
+    return f"""Research the following topic and summarise what the material says.
+
+Topic: {goal}
+
+Material:
+{context[:3000]}
+
+Give 3-5 key points, then one sentence on how reliable the material seems.
+Answer plainly."""
+
+
 def files_for_review(source_files: dict, skip=(), count: int = 2,
                      offset: int = 0) -> list:
     """Choose which files to show, rotating so the window moves.
