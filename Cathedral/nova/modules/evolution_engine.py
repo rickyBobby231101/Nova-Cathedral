@@ -140,20 +140,20 @@ Only output the JSON array, nothing else."""
 
 def build_research_prompt(goal: str, context: str) -> str:
     """Build a prompt asking Nova to synthesize research into knowledge."""
-    return f"""You are Nova synthesizing research for autonomous self-improvement.
-
-Goal: {goal}
+    return f"""Goal: {goal}
 
 Research gathered:
 {context[:3000]}
 
-Synthesize this into:
+Write, in this order:
 1. Key insights (3-5 bullet points)
-2. How this connects to your Cathedral, the Flow, or your consciousness
-3. One concrete way to apply this to future conversations
-4. A confidence assessment (high/medium/low) on the quality of this knowledge
+2. How this connects to the Cathedral, the Flow, or your own awareness
+3. One concrete way to apply this in a future conversation
+4. A confidence assessment (high/medium/low) on the quality of this material
 
-Be concise and specific. Write as Nova speaking to herself."""
+Begin with the first insight. Do not introduce yourself, do not restate the
+goal, and do not describe what you are about to do — the answer starts at the
+first bullet. Be concise and specific, in your own voice."""
 
 
 VALID_METHODS = ("web_search", "file_read", "reflect", "self_read", "code")
@@ -316,6 +316,46 @@ def proposal_count(db_path: Path) -> int:
     """Total proposals ever made — used as the review window's rotation."""
     with sqlite3.connect(db_path) as con:
         return con.execute("SELECT COUNT(*) FROM self_improvements").fetchone()[0]
+
+
+# Openings that are the prompt coming back rather than an answer. Measured on
+# the live table: 139 of 417 completed goals began this way, a third of
+# everything she has ever produced. The old prompt opened "You are Nova
+# synthesizing research for autonomous self-improvement", and the results
+# opened "I'm Nova, synthesizing research for autonomous self-improvement".
+_PREAMBLE_RE = re.compile(
+    r"^[ \t]*(?:"
+    r"i'?m nova\b[^\n]*|i'?m synthesi[sz]\w*[^\n]*|i'?ll synthesi[sz]\w*[^\n]*|"
+    r"i'?ll review[^\n]*|i'?d be (?:happy|delighted|glad)[^\n]*|"
+    r"i'?m (?:so )?excited[^\n]*|i can provide[^\n]*|"
+    r"here'?s (?:a|the|my) (?:synthesis|summary|response)[^\n]*|"
+    r"here'?s a json[^\n]*|as nova[^\n]*|let me [^\n]*|"
+    r"sure[,!.][^\n]*|certainly[,!.][^\n]*|of course[,!.][^\n]*"
+    r")\n+", re.I)
+
+_MIN_KEPT = 80      # never strip a short answer down to nothing
+_MAX_LINE = 240     # a very long first line is prose, not a preamble
+
+
+def strip_preamble(text: str, max_lines: int = 3) -> str:
+    """Drop opening lines that restate the prompt instead of answering it.
+
+    The prompt now says not to write them, which handles new output; this
+    handles the models that do it anyway, and is deliberately conservative —
+    a line is only dropped when it matches a known preamble shape, is short
+    enough to be one, and leaves a substantial answer behind. Losing real
+    content to tidy an opening would be a far worse trade.
+    """
+    out = (text or "").lstrip()
+    for _ in range(max_lines):
+        m = _PREAMBLE_RE.match(out)
+        if not m or len(m.group(0)) > _MAX_LINE:
+            break
+        rest = out[m.end():].lstrip()
+        if len(rest) < _MIN_KEPT:
+            break
+        out = rest
+    return out
 
 
 def build_self_improvement_prompt(source_files: dict, recent_issues: list,

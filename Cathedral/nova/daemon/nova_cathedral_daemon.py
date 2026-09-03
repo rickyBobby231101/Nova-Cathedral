@@ -3417,6 +3417,9 @@ class NovaConsciousness:
                     logging.info(f"Goal hit a refusal, not stored as knowledge: {text[:50]}")
                     await self._ask_chazel_about_dead_end(gid, text)
                     return
+            # Strip an opening that restates the prompt rather than answering
+            # it — a third of completed goals began that way.
+            synthesis = _evo.strip_preamble(synthesis)
             _evo.complete_goal(self.db_path, gid, synthesis)
             # .get's default fires only on a MISSING key, so a goal carrying
             # domain='' passed "" straight to append_knowledge — which built
