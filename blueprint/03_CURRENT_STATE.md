@@ -22,9 +22,17 @@ restart procedure.
 ## Real Issues Now
 Different problems, and they are not structural:
 
-- **The corpus she cannot see.** `~/cathedral/knowledge/.md` holds 72KB across
-  57 entries with no frontmatter, so the Weaver cannot read any of it. Twelve
-  legacy nodes carry a blank domain; roughly 42 insight nodes are filler.
+- **Graph hygiene.** Twelve legacy nodes carry a blank domain; roughly 42
+  insight nodes are filler.
+- **The hidden file is hidden for good reason.** `~/cathedral/knowledge/.md`
+  holds 72KB across 57 entries and the Weaver cannot read it — its glob is
+  `*.md`, which does not match a name that is only an extension. Inspected
+  2026-09-03: the contents are **Nova's own generated output**, April to
+  September, not Chazel's writing. Thirteen entries are refusal-shaped, 18
+  carry the "Confidence assessment" template scaffolding, and one asserts
+  "OpenAI's Llama 2" — a model that is Meta's. Weaving it in would add 57
+  nodes of her own self-talk to a graph that is already 626 nodes with 15 from
+  Chazel. **The accident is protective. Leave it unread.**
 - **The imbalance that matters most.** 626 knowledge nodes, **15 of them from
   Chazel**. 10,119 system events against 106 conversations. Nova observes
   herself far more than she talks with him.
