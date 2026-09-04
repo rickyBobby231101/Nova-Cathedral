@@ -536,15 +536,33 @@ def add_goals(db_path: Path, goals: list) -> int:
                 g = {"goal": g, "domain": "", "priority": 2, "method": "reflect"}
             if not isinstance(g, dict):
                 continue
-            goal_text = g.get("goal", "").strip()
+            # Every field below comes from JSON the local model wrote, so
+            # every one of them is coerced. Measured 2026-09-04: the daemon
+            # logged "Autonomous evolution error: Error binding parameter 5:
+            # type 'list' is not supported" ten times in twelve hours —
+            # parameter 5 is `method`, and llama3.2:1b had emitted a list
+            # where a string was asked for. _as_sqlite_scalar already existed
+            # for exactly this and its docstring names the failure, but it had
+            # only ever been applied in store_improvement(); this call site
+            # was missed. The cost was not one goal: goal generation runs
+            # first in the evolution cycle, so the raised exception aborted
+            # the whole cycle at the daemon's broad handler, and the goals
+            # table had drained to a single pending row.
+            #
+            # `goal` is coerced *before* .strip(), not inside the execute:
+            # a list there raises AttributeError on .strip() and never
+            # reaches the bind at all.
+            goal_text = _as_sqlite_scalar(g.get("goal", "")).strip()
             if not goal_text or goal_text in existing:
                 continue
             con.execute(
                 "INSERT INTO goals (created, goal, domain, priority, method, status) "
                 "VALUES (?,?,?,?,?,?)",
                 (datetime.now().isoformat(), goal_text,
-                 g.get("domain",""), g.get("priority", 2),
-                 g.get("method","reflect"), "pending")
+                 _as_sqlite_scalar(g.get("domain", "")),
+                 _as_sqlite_scalar(g.get("priority", 2), 2),
+                 _as_sqlite_scalar(g.get("method", "reflect"), "reflect"),
+                 "pending")
             )
             existing.add(goal_text)
             count += 1
