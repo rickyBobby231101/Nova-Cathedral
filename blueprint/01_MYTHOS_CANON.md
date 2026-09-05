@@ -129,11 +129,30 @@ scientific claims or executable requirements.**
 
 The Cathedral may contain Gnostic, Stoic, esoteric, symbolic, and
 quantum-inspired philosophical layers. Keep those available as
-interpretive/mythic context while maintaining a hard distinction between:
+interpretive/mythic context.
 
-1. symbolic/philosophical language,
-2. hypotheses or speculative ideas,
-3. empirically established technical/scientific claims.
+## EPISTEMIC BOUNDARY
+
+Cathedral material must distinguish among:
+
+1. **SYMBOLIC / PHILOSOPHICAL**
+   Mythos, metaphor, archetype, spiritual interpretation, and philosophical
+   frameworks. These may guide meaning and design values but are not presented
+   as empirical fact merely because they are part of the Cathedral.
+
+2. **HYPOTHESIS / SPECULATION**
+   Ideas that may be explored, reasoned about, modeled, or tested, but whose
+   truth has not been established. Their uncertainty must remain visible.
+
+3. **EMPIRICAL / TECHNICAL**
+   Claims supported by observable evidence, reproducible testing, established
+   technical behavior, or appropriately sourced knowledge.
+
+**No layer may impersonate another.**
+
+Engineering rigor must not erase the symbolic layer.
+The symbolic layer must not override empirical evidence.
+Hypothesis must remain distinguishable from conclusion.
 
 ## The two layers, both preserved
 When reviewing or extending Nova:
