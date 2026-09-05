@@ -3133,38 +3133,41 @@ class NovaConsciousness:
         cycle = 0
         while self.is_awakened:
             cycle += 1
+            # Each step runs isolated: one failure costs that step for this
+            # cycle, not the six that follow it. See _evolution_step for the
+            # 35-day outage that motivated this.
             try:
-                # ── generate new goals every 2 cycles ────────────────────────
                 if cycle % 2 == 0:
-                    await self._generate_goals()
+                    await self._evolution_step("goal_generation",
+                                               self._generate_goals())
 
-                # ── process one pending goal ──────────────────────────────────
-                goals = _evo.get_pending_goals(self.db_path, limit=1)
-                if goals:
-                    await self._process_goal(goals[0])
+                async def _process_one():
+                    goals = _evo.get_pending_goals(self.db_path, limit=1)
+                    if goals:
+                        await self._process_goal(goals[0])
+                await self._evolution_step("goal_processing", _process_one())
 
-                # ── self-code review every 10 cycles ─────────────────────────
                 if cycle % 10 == 0:
-                    await self._self_code_review()
+                    await self._evolution_step("self_code_review",
+                                               self._self_code_review())
 
-                # ── autonomous code study every 5 cycles ──────────────────────
                 if cycle % 5 == 0 and _EVO_AVAILABLE:
                     import random as _random
                     topic = _random.choice(_evo.CODING_STUDY_TOPICS)
                     logging.info(f"Autonomous code study: {topic}")
-                    await self._code_study(topic)
+                    await self._evolution_step("code_study", self._code_study(topic))
 
-                # ── resource-triggered maintenance every 15 cycles ────────────
                 if cycle % 15 == 0:
-                    await self._resource_maintenance()
+                    await self._evolution_step("resource_maintenance",
+                                               self._resource_maintenance())
 
-                # ── the Scribe files the inbox, just ahead of the Weaver ──────
+                # The Scribe files the inbox, just ahead of the Weaver.
                 # Ordering is deliberate: a document declaring a knowledge type
                 # is filed into the Weaver's directory, so running the Scribe
                 # first lets it reach the graph in this same cycle rather than
                 # waiting three more.
                 if cycle % 3 == 0 and _SCRIBE_AVAILABLE:
-                    try:
+                    async def _scribe_run():
                         sc = await asyncio.to_thread(_scribe.run)
                         if sc["filed"]:
                             logging.info(
@@ -3176,32 +3179,122 @@ class NovaConsciousness:
                         for name, dest in sc["conflicts"]:
                             logging.warning(f"The Scribe left '{name}' in the inbox: "
                                             f"'{dest}' already holds that name")
-                    except Exception as e:
-                        # Filing must never take the evolution loop down with it.
-                        logging.error(f"Scribe error: {e}")
+                    await self._evolution_step("scribe", _scribe_run())
 
-                # ── the Weaver tends the rose window every 3 cycles ───────────
                 if cycle % 3 == 0 and _WEAVER_AVAILABLE:
-                    s = await asyncio.to_thread(_weaver.weave, self.db_path)
-                    if s["woven"]:
-                        logging.info(
-                            f"The Weaver wove {s['woven']} new nodes, "
-                            f"{s['edges_added']} light-threads "
-                            f"(graph: {s['total_nodes']} nodes, {s['total_edges']} edges)")
+                    async def _weaver_run():
+                        st = await asyncio.to_thread(_weaver.weave, self.db_path)
+                        if st["woven"]:
+                            logging.info(
+                                f"The Weaver wove {st['woven']} new nodes, "
+                                f"{st['edges_added']} light-threads "
+                                f"(graph: {st['total_nodes']} nodes, "
+                                f"{st['total_edges']} edges)")
+                    await self._evolution_step("weaver", _weaver_run())
 
             except Exception as e:
-                logging.error(f"Autonomous evolution error: {e}")
+                # Backstop only. Every step above handles its own failure, so
+                # reaching here means something outside them broke — the loop
+                # scaffolding itself. It must still never exit: an unhandled
+                # exception here ends autonomy for good.
+                logging.error(f"Evolution loop scaffolding error: {e}")
                 self._note_error("evolution loop", e)
-                if _EVO_AVAILABLE:
-                    try:
-                        heal = await asyncio.to_thread(
-                            _evo.attempt_auto_heal, self.db_path, self.cathedral_path, str(e)
-                        )
-                        logging.info(f"Auto-heal ran: {heal['actions']}")
-                    except Exception as heal_err:
-                        logging.error(f"Auto-heal itself failed: {heal_err}")
 
             await asyncio.sleep(self._evo_cycle_mins * 60)
+
+    # ── evolution step isolation ──────────────────────────────────────────
+    # Auto-heal's three remedies — clear stale temp files, reset DB
+    # connections, VACUUM — address resource and I/O faults. Running them
+    # against a code defect accomplishes nothing, and did so 257 times: every
+    # auto-heal firing in this system's history was a response to one
+    # four-line bind bug, and every one reported "cleared 0 stale". Healing a
+    # TypeError is not recovery, it is a convincing imitation of it in the log.
+    _HEALABLE_ERRORS = (
+        sqlite3.OperationalError,   # database locked, disk I/O error, no space
+        OSError,                    # disk, permissions, exhausted handles
+        MemoryError,
+    )
+
+    # After this many identical failures, the same error has stopped being an
+    # event and become a defect. Keep running, stop pretending to heal, and
+    # say so loudly enough that it is visible in a journal scan.
+    _REPEAT_ESCALATION = 3
+
+    def _should_attempt_heal(self, exc: Exception) -> bool:
+        """Whether auto-heal could plausibly address this failure.
+
+        sqlite3.InterfaceError — the class raised by binding a list into a
+        query — is deliberately NOT healable. It is the exact error that drove
+        those 257 futile cycles.
+        """
+        return isinstance(exc, self._HEALABLE_ERRORS)
+
+    def _repeat_count(self, step: str, exc: Exception) -> int:
+        """How many times in a row this exact failure has occurred here."""
+        if not hasattr(self, "_evo_step_failures"):
+            self._evo_step_failures = {}
+        key = f"{step}:{type(exc).__name__}:{str(exc)[:120]}"
+        self._evo_step_failures[key] = self._evo_step_failures.get(key, 0) + 1
+        # Any other failure in this step resets its siblings, so the count
+        # means "this same thing, repeatedly" rather than "ever".
+        for k in list(self._evo_step_failures):
+            if k.startswith(f"{step}:") and k != key:
+                del self._evo_step_failures[k]
+        return self._evo_step_failures[key]
+
+    def _clear_repeat(self, step: str):
+        """A step that succeeded is no longer failing repeatedly."""
+        if not hasattr(self, "_evo_step_failures"):
+            return
+        for k in list(self._evo_step_failures):
+            if k.startswith(f"{step}:"):
+                del self._evo_step_failures[k]
+
+    async def _evolution_step(self, name: str, coro) -> bool:
+        """Run one evolution step so its failure costs only that step.
+
+        Seven subsystems previously shared one try/except, so a failure in the
+        first aborted the remaining six for the whole cycle. Goal generation
+        runs first, and when it broke, the Weaver, the Scribe, self-review,
+        code study and maintenance all silently stopped running with it — for
+        35 days, while the log showed only a single line about goal binding.
+
+        The Scribe already had its own inner guard, with the comment "Filing
+        must never take the evolution loop down with it." That reasoning was
+        correct and simply had not been applied to its six siblings. This is
+        that comment, generalised.
+
+        Returns True on success so a caller can skip dependent work, though
+        none currently does — the steps are independent by design.
+        """
+        try:
+            await coro
+            self._clear_repeat(name)
+            return True
+        except Exception as e:
+            n = self._repeat_count(name, e)
+            if n >= self._REPEAT_ESCALATION:
+                logging.warning(
+                    f"PERSISTENT FAILURE — evolution step '{name}' has failed "
+                    f"{n} times with the same error; this is a defect, not an "
+                    f"incident: {type(e).__name__}: {e}"
+                )
+            else:
+                logging.error(f"Evolution step '{name}' failed: {type(e).__name__}: {e}")
+            self._note_error(f"evolution:{name}", e)
+
+            # Heal only what healing can address, and only while the failure
+            # still looks like an incident.
+            if (_EVO_AVAILABLE and self._should_attempt_heal(e)
+                    and n < self._REPEAT_ESCALATION):
+                try:
+                    heal = await asyncio.to_thread(
+                        _evo.attempt_auto_heal, self.db_path,
+                        self.cathedral_path, f"{name}: {e}")
+                    logging.info(f"Auto-heal ran for '{name}': {heal['actions']}")
+                except Exception as heal_err:
+                    logging.error(f"Auto-heal itself failed: {heal_err}")
+            return False
 
     async def _resource_maintenance(self):
         """Check for CPU/RAM/disk pressure and act: log rotation, cache pruning, DB vacuum."""
