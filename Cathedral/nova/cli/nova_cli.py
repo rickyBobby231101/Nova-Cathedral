@@ -35,6 +35,7 @@ from pathlib import Path
 NOVA_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(NOVA_ROOT / "modules"))
 
+import council_log                                  # noqa: E402
 import providers                                    # noqa: E402
 
 SOCKET_PATH = "/tmp/nova_socket"
@@ -182,6 +183,15 @@ def cmd_council(args) -> int:
     if spoke < 2:
         print("⚠  fewer than two voices — this is not a council, it is one opinion")
     print(f"transcript: {md}")
+
+    # A round is not finished when the models stop talking. Raised by qwen3:4b:
+    # labelling a synthesis as one reading only helps a reader who reads it, so
+    # an undecided round must not look complete.
+    waiting = council_log.pending()
+    if waiting:
+        print(f"\n⧗ {len(waiting)} session(s) awaiting your decision:")
+        for w in waiting:
+            print(f"    nova decide {w['session_id']} \"...\"")
     return 0 if spoke else 1
 
 
@@ -222,6 +232,33 @@ def cmd_status(args) -> int:
 
     avail = sum(1 for s in providers.status() if s["available"])
     print(f"\n  {avail} of {len(providers.names())} seats available")
+
+    waiting = council_log.pending()
+    total = len(council_log.load_sessions())
+    if waiting:
+        print(f"\n  ⧗ {len(waiting)} of {total} council session(s) awaiting your decision")
+        for w in waiting:
+            print(f"      {w['session_id']}  ({w['voices_heard']} voices)  "
+                  f"{w['request'][:46]}…")
+    elif total:
+        print(f"\n  ✓ all {total} council session(s) decided")
+    return 0
+
+
+def cmd_decide(args) -> int:
+    """Record the Observer's ruling on a council session.
+
+    The Council does not decide; it advises. This is where the deciding is
+    written down, and until it is written the session stays pending.
+    """
+    r = council_log.record_decision(args.session_id, args.decision)
+    if "error" in r:
+        print(f"✗ {r['error']}", file=sys.stderr)
+        return 1
+    print(f"✓ {r['session_id']} decided")
+    left = council_log.pending()
+    print(f"  {len(left)} session(s) still awaiting a decision" if left
+          else "  all council sessions are now decided")
     return 0
 
 
@@ -245,6 +282,11 @@ def main() -> int:
     c.add_argument("--no-context", action="store_true",
                    help="skip CATHEDRAL_STATE.md — much faster for local seats")
     c.set_defaults(fn=cmd_council)
+
+    dec = sub.add_parser("decide", help="record your ruling on a council session")
+    dec.add_argument("session_id")
+    dec.add_argument("decision")
+    dec.set_defaults(fn=cmd_decide)
 
     s = sub.add_parser("status", help="daemon, ollama, seats, memory")
     s.set_defaults(fn=cmd_status)
