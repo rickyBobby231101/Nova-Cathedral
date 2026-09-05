@@ -24,14 +24,34 @@ import openai as _openai
 
 # Order is the order a council round reports in: local first because it is the
 # seat that always answers, then the reviewers, then synthesis last.
-PROVIDERS = {
-    "ollama": _ollama,
+# Local lineage seats first — they are the ones that always answer. Each pins
+# a different lab's model so the Council hears genuinely independent reasoning
+# rather than one model agreeing with itself four times.
+PROVIDERS = dict(_ollama.seats())
+PROVIDERS.update({
     "gemini": _gemini,
     "claude": _claude,
     "openai": _openai,
-}
+})
 
-DEFAULT_COUNCIL = ["ollama", "gemini", "claude", "openai"]
+# The full Council. Cloud seats stay in the list even when unavailable: a seat
+# that reports "no credit" is information the Observer needs, and silently
+# dropping it would conceal provenance — the Silent Order's own signature.
+DEFAULT_COUNCIL = list(PROVIDERS)
+
+# Local-only, for a round that costs nothing and cannot be revoked.
+LOCAL_COUNCIL = list(_ollama.LINEAGES)
+
+
+def installed_models() -> list:
+    """Models Ollama currently has pulled.
+
+    Lives on the registry because callers want "what can run locally", not
+    "ask one particular seat". `nova status` previously reached through
+    PROVIDERS["ollama"] for this, which broke the moment that key became a
+    lineage seat object rather than the module.
+    """
+    return _ollama.installed_models()
 
 
 def get(name: str):

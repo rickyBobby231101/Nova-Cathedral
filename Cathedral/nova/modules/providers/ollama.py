@@ -23,6 +23,22 @@ DEFAULT_MODEL = "qwen3:4b"          # deliberately not the daemon's llama3.2:1b
 NAME = "ollama"
 ROLE = "local independent voice"
 
+# One seat per model lineage. Seating the same model twice produces agreement
+# that means nothing; seating four labs' models produces disagreement that
+# does. All local, all free, and none of them revocable by a vendor tier
+# decision — which is the whole argument for them after Google withdrew the
+# Gemini CLI's free tier mid-project.
+#
+# Cost is real and is CPU time, not money: ~250-550s per seat on this box
+# (7.6 GB, no GPU), so a four-seat local round is a background task rather
+# than an interactive one. That trade was made deliberately.
+LINEAGES = {
+    "ollama":          ("qwen3:4b",         "Alibaba"),
+    "ollama:gemma":    ("gemma3:4b",        "Google"),
+    "ollama:llama":    ("llama3.2:3b",      "Meta"),
+    "ollama:deepseek": ("deepseek-r1:1.5b", "DeepSeek, reasoning-tuned"),
+}
+
 
 def installed_models(url: str = DEFAULT_URL, timeout: float = 5.0) -> list:
     try:
@@ -71,3 +87,39 @@ def ask(prompt: str, context: str = None, model: str = None,
     if not text.strip():
         return {"error": f"{model} returned an empty response"}
     return {"response": text, "model": model, "latency": round(time.time() - t0, 2)}
+
+
+class _Seat:
+    """One local seat pinned to one model.
+
+    Presents the same surface as a provider module (NAME, ROLE, available,
+    ask) so the registry treats a lineage seat and a cloud seat identically.
+    Pinning matters: without it every local seat would answer on whatever
+    model happened to be default, and four identical answers would look like
+    consensus.
+    """
+
+    def __init__(self, name: str, model: str, lab: str):
+        self.NAME = name
+        self.MODEL = model
+        self.ROLE = f"local voice ({lab})"
+
+    def available(self):
+        models = installed_models()
+        if not models:
+            return False, "Ollama is not responding on localhost:11434"
+        if self.MODEL not in models:
+            return False, f"{self.MODEL} not pulled (ollama pull {self.MODEL})"
+        return True, f"ready ({self.MODEL})"
+
+    def ask(self, prompt: str, context: str = None, model: str = None,
+            timeout: float = COUNCIL_TIMEOUT) -> dict:
+        # The seat's own model wins unless the caller names one explicitly.
+        return ask(prompt, context=context, model=model or self.MODEL,
+                   timeout=timeout)
+
+
+def seats() -> dict:
+    """Every local lineage seat, keyed by seat name."""
+    return {name: _Seat(name, model, lab)
+            for name, (model, lab) in LINEAGES.items()}

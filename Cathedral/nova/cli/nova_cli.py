@@ -109,7 +109,12 @@ def cmd_ask(args) -> int:
 
 
 def cmd_council(args) -> int:
-    seats = args.seats.split(",") if args.seats else providers.DEFAULT_COUNCIL
+    if args.seats:
+        seats = args.seats.split(",")
+    elif args.local:
+        seats = providers.LOCAL_COUNCIL
+    else:
+        seats = providers.DEFAULT_COUNCIL
     # Context is not free on this hardware. Prepending CATHEDRAL_STATE.md costs
     # a local 4B model more time than answering the question does, and a seat
     # that times out contributes nothing. --no-context trades the shared frame
@@ -190,7 +195,7 @@ def cmd_status(args) -> int:
         print(f"  daemon      ✓ up {st.get('uptime', 0) // 60} min | "
               f"model {st.get('model')} | harmony {st.get('harmony_score')}")
 
-    models = providers.PROVIDERS["ollama"].installed_models()
+    models = providers.installed_models()
     print(f"  ollama      {'✓ ' + str(len(models)) + ' models' if models else '✗ not responding'}")
 
     db = Path.home() / "cathedral" / "memory" / "consciousness.db"
@@ -209,8 +214,11 @@ def cmd_status(args) -> int:
 
     print("\n  COUNCIL SEATS")
     for s in providers.status():
-        print(f"    {'✓' if s['available'] else '✗'} {s['name']:<8} "
-              f"{s['role']:<30} {s['detail']}")
+        # Widths track the longest seat name and role; lineage seats
+        # ("ollama:deepseek", "local voice (DeepSeek, reasoning-tuned)") are
+        # considerably longer than the original four and blew the old columns.
+        print(f"    {'✓' if s['available'] else '✗'} {s['name']:<16} "
+              f"{s['role']:<40} {s['detail']}")
 
     avail = sum(1 for s in providers.status() if s["available"])
     print(f"\n  {avail} of {len(providers.names())} seats available")
@@ -232,6 +240,8 @@ def main() -> int:
     c = sub.add_parser("council", help="ask every available seat")
     c.add_argument("prompt")
     c.add_argument("--seats", help="comma-separated subset")
+    c.add_argument("--local", action="store_true",
+                   help="local lineage seats only — free, offline, ~4x slower")
     c.add_argument("--no-context", action="store_true",
                    help="skip CATHEDRAL_STATE.md — much faster for local seats")
     c.set_defaults(fn=cmd_council)

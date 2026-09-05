@@ -31,12 +31,51 @@ import base                      # noqa: E402
 import providers                 # noqa: E402
 
 CLOUD = ["gemini", "openai", "claude"]
-ALL   = ["ollama", "gemini", "openai", "claude"]
+LOCAL = ["ollama", "ollama:gemma", "ollama:llama", "ollama:deepseek"]
+ALL   = LOCAL + CLOUD
 
 
 class TestRegistry:
     def test_every_seat_is_registered(self):
         assert set(providers.names()) == set(ALL)
+
+    def test_each_local_seat_pins_a_distinct_model(self):
+        """Four seats on one model is one opinion repeated, not a council.
+
+        The whole value of the local seats is that they come from different
+        labs — Alibaba, Google, Meta, DeepSeek — with different training
+        corpora and different failure modes. If two seats resolve to the same
+        model their agreement proves nothing, and the Council would be
+        manufacturing the consensus the Accord says must emerge.
+        """
+        models = [providers.get(n).MODEL for n in LOCAL]
+        assert len(set(models)) == len(models), f"duplicate models: {models}"
+
+    def test_cloud_seats_stay_listed_when_unavailable(self):
+        """A seat reporting "no credit" is information the Observer needs.
+        Dropping it silently would conceal provenance."""
+        assert set(CLOUD) <= set(providers.DEFAULT_COUNCIL)
+
+    def test_registry_exposes_installed_models(self):
+        """`nova status` needs "what can run locally" without reaching through
+        a seat. It used to do PROVIDERS["ollama"].installed_models(), which
+        broke silently the moment that key became a lineage seat object — the
+        CLI crashed mid-report, after printing the daemon line."""
+        assert callable(providers.installed_models)
+        assert isinstance(providers.installed_models(), list)
+
+    def test_no_seat_is_assumed_to_be_a_module(self):
+        """Every registry value must satisfy the protocol, whether it is a
+        module or a seat instance. Mixing the two is what broke status."""
+        for name in providers.names():
+            seat = providers.get(name)
+            for attr in ("ask", "available", "NAME", "ROLE"):
+                assert hasattr(seat, attr), f"{name} lacks {attr}"
+
+    def test_local_council_is_cloud_free(self):
+        """LOCAL_COUNCIL must never reach a paid seat."""
+        assert set(providers.LOCAL_COUNCIL) == set(LOCAL)
+        assert not (set(providers.LOCAL_COUNCIL) & set(CLOUD))
 
     def test_unknown_seat_is_an_error_not_an_exception(self):
         r = providers.ask("nonexistent", "hello")
