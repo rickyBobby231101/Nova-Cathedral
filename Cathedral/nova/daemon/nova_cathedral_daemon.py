@@ -657,6 +657,27 @@ class NovaConsciousness:
             except sqlite3.OperationalError:
                 pass
 
+            # A stored reflection could not be corrected. Raised by llama3.2:3b
+            # in the Council round of 2026-09-04, reviewing the proposal to
+            # relabel council syntheses: relabelling an interpretation helps
+            # only if it can also be revised, and "the current system still
+            # stores the synthesized interpretation as a truth ... problematic
+            # if the human operator later discovers errors or biases."
+            #
+            # Corrections supersede; they never overwrite. The original row
+            # keeps its text and gains a pointer to what replaced it, because
+            # a correction that erases what was corrected conceals provenance —
+            # which the canon names as a Silent Order construct.
+            for ddl in (
+                "ALTER TABLE reflections ADD COLUMN superseded_by INTEGER",
+                "ALTER TABLE reflections ADD COLUMN correction_note TEXT",
+                "ALTER TABLE reflections ADD COLUMN corrects INTEGER",
+            ):
+                try:
+                    con.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass
+
         # Initialize MegaBrain after DB schema is ready
         if _MEGA_BRAIN_AVAILABLE and self.mega_brain is None:
             try:
@@ -715,14 +736,79 @@ class NovaConsciousness:
             )
         logging.info(f"Reflection stored ({trigger})")
 
+    def correct_reflection(self, reflection_id: int, content: str,
+                           note: str = "", trigger: str = "correction") -> dict:
+        """Supersede a stored reflection with a corrected one.
+
+        Nothing is deleted and nothing is rewritten. The original keeps its
+        text and gains `superseded_by`; the replacement records `corrects`, so
+        the chain reads in both directions and the fact that a correction
+        happened is itself part of the record.
+
+        This exists because a stored synthesis was previously permanent. A
+        council judgment, once written, was read ever after as what the
+        Council concluded — with no way to mark it wrong short of editing the
+        database by hand.
+        """
+        with sqlite3.connect(self.db_path) as con:
+            row = con.execute(
+                "SELECT id, superseded_by FROM reflections WHERE id=?",
+                (reflection_id,)).fetchone()
+            if row is None:
+                return {"error": f"no reflection with id {reflection_id}"}
+            if row[1]:
+                # Correcting a correction is fine; correcting something already
+                # superseded is almost always a mistake about which row is live.
+                return {"error": f"reflection {reflection_id} was already "
+                                 f"superseded by {row[1]} — correct that one instead"}
+
+            cur = con.execute(
+                "INSERT INTO reflections (timestamp, trigger, content, "
+                "conversation_count, traits, corrects) VALUES (?,?,?,?,?,?)",
+                (datetime.now().isoformat(), trigger, content,
+                 self.conversation_count(),
+                 json.dumps(self.consciousness_traits), reflection_id))
+            new_id = cur.lastrowid
+            con.execute(
+                "UPDATE reflections SET superseded_by=?, correction_note=? WHERE id=?",
+                (new_id, note or None, reflection_id))
+
+        logging.info(f"Reflection {reflection_id} superseded by {new_id}")
+        return {"ok": True, "corrected": reflection_id, "replacement": new_id,
+                "note": note}
+
+    def reflection_history(self, reflection_id: int) -> dict:
+        """The full correction chain around one reflection.
+
+        A correction is only honest if what it replaced stays readable.
+        """
+        with sqlite3.connect(self.db_path) as con:
+            rows = con.execute(
+                "SELECT id, timestamp, trigger, content, superseded_by, "
+                "correction_note, corrects FROM reflections "
+                "WHERE id=? OR corrects=? OR superseded_by=? ORDER BY id",
+                (reflection_id, reflection_id, reflection_id)).fetchall()
+        return {"chain": [
+            {"id": r[0], "ts": r[1], "trigger": r[2], "content": r[3],
+             "superseded_by": r[4], "correction_note": r[5], "corrects": r[6]}
+            for r in rows]}
+
     def get_reflections(self, n: int = 10) -> list:
         try:
             with sqlite3.connect(self.db_path) as con:
+                # Superseded rows are excluded: they are history, not what
+                # Nova currently holds. They stay in the table and remain
+                # readable through reflection_history() — excluded from the
+                # live view, never erased. A corrected reflection that kept
+                # feeding self-review would be the original defect wearing a
+                # correction as a hat.
                 rows = con.execute(
-                    "SELECT timestamp, trigger, content FROM reflections "
+                    "SELECT timestamp, trigger, content, id FROM reflections "
+                    "WHERE superseded_by IS NULL "
                     "ORDER BY timestamp DESC LIMIT ?", (n,)
                 ).fetchall()
-            return [{"ts": r[0], "trigger": r[1], "content": r[2]} for r in rows]
+            return [{"ts": r[0], "trigger": r[1], "content": r[2], "id": r[3]}
+                    for r in rows]
         except Exception:
             return []
 
@@ -4454,6 +4540,26 @@ class NovaConsciousness:
             n = int(d.get("n", 10))
             return {"reflections": self.get_reflections(n)}
 
+        # ── correct_reflection / reflection_history ───────────────────────────
+        # A stored synthesis used to be permanent. These make it revisable
+        # without making it erasable.
+        elif cmd == "correct_reflection":
+            rid = d.get("id", d.get("reflection_id"))
+            content = d.get("content", d.get("correction", ""))
+            if rid is None:
+                return {"error": "missing id"}
+            if not content.strip():
+                return {"error": "missing content — a correction must say what "
+                                 "is true, not merely that something was wrong"}
+            return await asyncio.to_thread(
+                self.correct_reflection, int(rid), content, d.get("note", ""))
+
+        elif cmd == "reflection_history":
+            rid = d.get("id", d.get("reflection_id"))
+            if rid is None:
+                return {"error": "missing id"}
+            return await asyncio.to_thread(self.reflection_history, int(rid))
+
         # ── reasoning_on / reasoning_off ──────────────────────────────────────
         elif cmd == "reasoning_on":
             self.reasoning_enabled = True
@@ -5605,6 +5711,7 @@ class NovaConsciousness:
                     "status", "ask", "web_search", "wikipedia", "reflect",
                     "reflections", "reasoning_on", "reasoning_off", "speak",
                     "save", "oracle", "pipeline", "evolution", "entities", "recall",
+                    "correct_reflection", "reflection_history",
                     "memories", "resonance", "ritual_on", "ritual_off",
                     "clear_session", "shutdown",
                     # the crypt
