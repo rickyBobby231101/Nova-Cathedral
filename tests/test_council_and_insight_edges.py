@@ -1,6 +1,7 @@
 """
 Tests for two completeness fixes:
-- Council now synthesizes its entities' answers into Nova's unified judgment
+- Council synthesizes its seats' answers into Nova's *interpretation* —
+  explicitly one reading among them, never their unified judgment
   (a deliberation, not just a poll).
 - Eyemoeba insight nodes are woven into the graph via edges to the evidence
   they were drawn from (not orphan nodes).
@@ -170,3 +171,87 @@ async def test_errored_entity_not_synthesized(nova, monkeypatch):
     assert "error" in res["responses"]["tillagon"].lower() or "non-answer" in res["responses"]["tillagon"].lower()
     assert res["synthesis"] is None
     assert [r for r in nova.get_reflections(n=5) if r["trigger"] == "council"] == []
+
+
+# ── The Council's synthesis is an interpretation, not a verdict ──────────────
+# Put to the Council itself on 2026-09-04. All four local seats agreed the old
+# framing was wrong: it asked the model to "weigh their perspectives into a
+# single unified judgment ... be decisive", stored the result as what the
+# Council concluded, and the GUI headlined it above the voices it was drawn
+# from. The canon says consensus should emerge rather than be manufactured.
+
+@pytest.mark.asyncio
+async def test_the_synthesis_prompt_does_not_ask_for_a_verdict(nova, monkeypatch):
+    """The wording is the mechanism. A prompt that demands a decisive unified
+    judgment gets one, whatever the seats actually said."""
+    seen = {}
+
+    async def fake_chat(messages, model=None, timeout=180):
+        p = messages[-1]["content"]
+        if "Council of the Accord" in p:
+            seen["prompt"] = p
+            return {"response": "They diverge on timing.", "latency": 0.1}
+        return {"response": "entity answer, long enough to count", "latency": 0.1}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    await nova._council_ask("Is it time?", entities=["tillagon", "phoenix"])
+
+    prompt = seen["prompt"].lower()
+    for banned in ("unified judgment", "be specific and decisive"):
+        assert banned not in prompt, f"the prompt still demands a verdict: {banned!r}"
+    assert "not as a verdict on their behalf" in prompt
+    assert "unresolved tension" in prompt, (
+        "the prompt should ask for disagreement to be reported, not resolved"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_result_names_the_seats_it_read(nova, monkeypatch):
+    """gemma3:4b's objection: labelling the output does not reveal how it was
+    reached. Naming the seats is the cheapest part of that to expose."""
+    async def fake_chat(messages, model=None, timeout=180):
+        if "Council of the Accord" in messages[-1]["content"]:
+            return {"response": "A reading of what they said.", "latency": 0.1}
+        return {"response": "entity answer, long enough to count", "latency": 0.1}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    res = await nova._council_ask("?", entities=["tillagon", "phoenix"])
+
+    assert res["is_interpretation"] is True
+    assert set(res["interpretation_of"]) == {"tillagon", "phoenix"}
+
+
+@pytest.mark.asyncio
+async def test_the_stored_record_does_not_claim_agreement(nova, monkeypatch):
+    """What is stored is read later as what the Council decided. It must say
+    on its face that it is one reading, not their agreement."""
+    async def fake_chat(messages, model=None, timeout=180):
+        if "Council of the Accord" in messages[-1]["content"]:
+            return {"response": "A reading of what they said.", "latency": 0.1}
+        return {"response": "entity answer, long enough to count", "latency": 0.1}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    await nova._council_ask("Is it time?", entities=["tillagon", "phoenix"])
+
+    stored = [r for r in nova.get_reflections(5) if r["trigger"] == "council"]
+    assert stored, "the council reflection was not stored"
+    text = stored[0]["content"]
+    assert "interpretation" in text.lower()
+    assert "not their agreement" in text.lower()
+    assert "judgment" not in text.lower(), "the stored record still claims a verdict"
+
+
+@pytest.mark.asyncio
+async def test_seat_answers_are_still_preserved_individually(nova, monkeypatch):
+    """The property that must survive the reframing: every seat's own words
+    remain, unmerged and attributable."""
+    async def fake_chat(messages, model=None, timeout=180):
+        if "Council of the Accord" in messages[-1]["content"]:
+            return {"response": "A reading.", "latency": 0.1}
+        return {"response": "entity answer, long enough to count", "latency": 0.1}
+
+    monkeypatch.setattr(nova, "_ollama_chat", fake_chat)
+    res = await nova._council_ask("?", entities=["tillagon", "phoenix"])
+    assert set(res["responses"]) == {"tillagon", "phoenix"}
+    for v in res["responses"].values():
+        assert v.strip()

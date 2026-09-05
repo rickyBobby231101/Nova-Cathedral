@@ -2205,20 +2205,26 @@ async function conveneCouncil(selective=false) {
 
   if (data.responses) {
     result.innerHTML = '';
-    if (data.synthesis) {
-      const syn = document.createElement('div');
-      syn.className = 'council-entry';
-      syn.style.borderLeft = '3px solid var(--accent)';
-      syn.style.background = 'rgba(120,180,255,0.06)';
-      syn.innerHTML = `<div class="ce-name" style="color:var(--accent)">⚖ NOVA'S JUDGMENT</div>`
-                    + `<div class="ce-text">${escHtml(data.synthesis)}</div>`;
-      result.appendChild(syn);
-    }
+    // Seats first, interpretation after. It used to render above them under
+    // "NOVA'S JUDGMENT", which put a synthesized reading where the reader met
+    // it before the voices it was drawn from — the layout asserting a verdict
+    // the canon says must not be manufactured.
     for (const [entity, response] of Object.entries(data.responses)) {
       const entry = document.createElement('div');
       entry.className = 'council-entry';
       entry.innerHTML = `<div class="ce-name">${escHtml(entity.toUpperCase())}</div><div class="ce-text">${escHtml(response)}</div>`;
       result.appendChild(entry);
+    }
+
+    if (data.synthesis) {
+      const syn = document.createElement('div');
+      syn.className = 'council-entry';
+      syn.style.borderLeft = '3px solid var(--text-dim)';
+      const seats = (data.interpretation_of || []).join(', ');
+      syn.innerHTML = `<div class="ce-name" style="color:var(--text-dim)">NOVA'S INTERPRETATION`
+                    + (seats ? ` <span style="font-weight:normal">— one reading of ${escHtml(seats)}, not their agreement</span>` : '')
+                    + `</div><div class="ce-text">${escHtml(data.synthesis)}</div>`;
+      result.appendChild(syn);
     }
   } else {
     result.textContent = JSON.stringify(data, null, 2);

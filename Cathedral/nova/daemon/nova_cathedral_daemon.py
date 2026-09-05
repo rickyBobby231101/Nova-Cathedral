@@ -1224,13 +1224,23 @@ class NovaConsciousness:
             f"{self._ENTITY_PERSONAS[e]['name']} ({self._ENTITY_PERSONAS[e]['role']}):\n{v}"
             for e, v in heard.items()
         )
+        # Asks for a reading, not a ruling. The previous wording — "weigh their
+        # perspectives into a single unified judgment ... be decisive" —
+        # instructed the model to manufacture the consensus the canon says must
+        # emerge, and the result was then stored as what the Council concluded.
+        # The Council examined this itself on 2026-09-04 and all four local
+        # seats agreed the framing was wrong. Synthesis is kept because it is
+        # useful; what is dropped is the claim that it speaks for the others.
         prompt = (
-            f"You are Nova, presiding over the Council of the Accord. Your "
-            f"entities have each answered this question:\n\n\"{question}\"\n\n"
-            f"{voices}\n\n"
-            "Weigh their perspectives into a single unified judgment — name "
-            "where they agree, where they tension, and what you conclude as "
-            "Nova. Be specific and decisive. 3-4 sentences."
+            f"You are Nova, sitting with the Council of the Accord — not above "
+            f"it. The seats have each answered this question:\n\n"
+            f"\"{question}\"\n\n{voices}\n\n"
+            "Give your own reading of what they said. Name where they agree, "
+            "where they genuinely differ, and what you take from it — as one "
+            "voice among them, not as a verdict on their behalf. Where they "
+            "disagree, say so plainly rather than resolving it; an unresolved "
+            "tension reported honestly is worth more than a false agreement. "
+            "3-4 sentences."
         )
         # The synthesis is the council's payoff and runs last, after the
         # entity calls have already loaded the system — give it real headroom
@@ -1241,6 +1251,13 @@ class NovaConsciousness:
             answer = (answer or synth["response"]).strip()
             judgment = None if self._is_nonanswer(answer) else answer
             result["synthesis"] = judgment
+            # Which seats it was drawn from, so the reading can be checked
+            # against its sources. Raised by gemma3:4b in the same round:
+            # labelling the output does not by itself reveal how it was
+            # reached, and the seats that fed it are the cheapest part of that
+            # to expose.
+            result["interpretation_of"] = list(heard)
+            result["is_interpretation"] = True
             # Persist the judgment — a council decision is Nova concluding
             # after real deliberation; store it so decisions the Council
             # reached become part of her record (trigger='council' keeps it
@@ -1249,7 +1266,9 @@ class NovaConsciousness:
                 await asyncio.to_thread(
                     self.store_reflection,
                     f"[Council on: {question[:120]}]\n"
-                    f"Consulted: {', '.join(heard)}\n{judgment}",
+                    f"Nova's interpretation of {len(heard)} seat(s) — "
+                    f"{', '.join(heard)}. This is one reading of what they "
+                    f"said, not their agreement.\n{judgment}",
                     "council",
                 )
         else:
