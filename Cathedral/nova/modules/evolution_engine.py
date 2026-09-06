@@ -470,6 +470,50 @@ def parse_goals_from_response(response: str) -> list:
         return []
 
 
+def is_declined(improvement: str) -> bool:
+    """True when the proposal is the model declining, not proposing.
+
+    The prompt offers an explicit way out: reply with the single word NOTHING.
+    The daemon checked for that only at the start of the *raw response*, so a
+    model that wrapped its decline in the requested JSON —
+    {"improvement": "NOTHING", ...} — sailed past it: the response starts with
+    "{", the JSON parses, and NOTHING is handed to the file writer as the
+    change to make. That is exactly what happened to
+    plugins/sandbox_plugins/gematria.py on 2026-09-03, where the applied
+    improvement reads, in full, "NOTHING".
+
+    A decline that gets applied is worse than no decline at all, because it
+    edits a file on the strength of an answer that said not to.
+    """
+    t = (improvement or "").strip().strip('."\'').upper()
+    # Empty counts. The daemon checks for it separately today, but a function
+    # named is_declined that answers False for "nothing at all" is a trap for
+    # the next caller who trusts the name and drops the upstream check.
+    if not t:
+        return True
+    return t in ("NOTHING", "NONE", "N/A", "NO CHANGE", "NO CHANGES")
+
+
+def echoes_the_prompt(improvement: str, prompt: str, min_len: int = 24) -> bool:
+    """True when the 'improvement' is a line lifted from the instructions.
+
+    Small models sometimes answer a request for a suggestion by repeating the
+    request. plugins/sandbox_plugins/weather.py was edited twice on 2026-09-04
+    on the strength of an improvement whose text was the prompt's own sentence:
+    "Identify ONE improvement to code you can actually see above."
+
+    Echo's prompt-echo guard does not catch this — it fingerprints the
+    Observer's pipeline line, which appears in the *chat* system prompt and not
+    in the self-review one. So the check has to be against the prompt actually
+    sent, which is the only thing that generalises: any proposal whose text is
+    already in the instructions is a restatement, not a suggestion.
+    """
+    imp = " ".join((improvement or "").split()).strip('."\'')
+    if len(imp) < min_len:
+        return False
+    return imp.lower() in " ".join((prompt or "").split()).lower()
+
+
 def parse_improvement_from_response(response: str) -> dict:
     """Extract improvement suggestion from LLM JSON response."""
     try:

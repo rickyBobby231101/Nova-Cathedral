@@ -3780,6 +3780,22 @@ class NovaConsciousness:
             imp = _evo.parse_improvement_from_response(result["response"])
             if not imp.get("improvement"):
                 return
+
+            # A decline wrapped in the requested JSON is still a decline. The
+            # raw-response check above only sees NOTHING when it is the whole
+            # answer; gematria.py was edited on the strength of
+            # {"improvement": "NOTHING"} sailing past it.
+            if _evo.is_declined(imp["improvement"]):
+                logging.info("Self-review declined inside its JSON — nothing applied")
+                return
+
+            # And a proposal that repeats the instructions is not a proposal.
+            # weather.py was edited twice on an "improvement" whose text was
+            # the prompt's own sentence.
+            if _evo.echoes_the_prompt(imp["improvement"], prompt):
+                logging.info("Self-improvement discarded — it restates the "
+                             f"prompt: {imp['improvement'][:60]!r}")
+                return
             # A proposal about a file she was not shown is free association,
             # which is exactly what produced the oracle_module backlog.
             shown = {n for n, _ in reviewed}
