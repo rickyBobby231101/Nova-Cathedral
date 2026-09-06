@@ -21,7 +21,15 @@ from base import api_key, build_prompt, post_json
 
 ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/models/"
             "{model}:generateContent")
-DEFAULT_MODEL = "gemini-2.0-flash"
+# A stable alias rather than a numbered version. `gemini-2.0-flash` was the
+# default here until 2026-09-06, when the first real call returned:
+#   HTTP 404: This model models/gemini-2.0-flash is no longer available.
+# Numbered Gemini models retire; the `-latest` aliases do not, and a Council
+# seat that breaks silently when a vendor sunsets a version is worse than one
+# that occasionally shifts capability.
+DEFAULT_MODEL = "gemini-flash-latest"
+# Lighter, and reachable when the shared flash tier is saturated.
+FALLBACK_MODEL = "gemini-flash-lite-latest"
 
 NAME = "gemini"
 ROLE = "independent review"
@@ -44,11 +52,20 @@ def ask(prompt: str, context: str = None, model: str = None,
         return {"error": available()[1]}
     model = model or DEFAULT_MODEL
     t0 = time.time()
-    data = post_json(
-        ENDPOINT.format(model=model) + f"?key={key}",
-        {"contents": [{"parts": [{"text": build_prompt(prompt, context)}]}]},
-        {}, timeout,
-    )
+    body = {"contents": [{"parts": [{"text": build_prompt(prompt, context)}]}]}
+    data = post_json(ENDPOINT.format(model=model) + f"?key={key}", body, {}, timeout)
+
+    # 503 means the free tier is busy, not that anything is wrong. Measured
+    # 2026-09-06: flash-latest returned 503 while flash-lite-latest answered in
+    # 15.7s. A seat that drops out because a shared free model is momentarily
+    # loaded is a seat that will be empty exactly when the Council is busiest,
+    # so fall to the lighter model once before giving up.
+    if "error" in data and "503" in data["error"] and model == DEFAULT_MODEL:
+        data = post_json(ENDPOINT.format(model=FALLBACK_MODEL) + f"?key={key}",
+                         body, {}, timeout)
+        if "error" not in data:
+            model = FALLBACK_MODEL
+
     if "error" in data:
         return data
     try:
