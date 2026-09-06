@@ -16,6 +16,7 @@ This runs as a background daemon task — Nova evolves without being asked.
 import json
 import random
 import re
+import contextlib
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +81,23 @@ CODING_STUDY_TOPICS = [
     "threading and concurrent futures",
     "string formatting and f-strings",
 ]
+
+
+@contextlib.contextmanager
+def _db(db_path, timeout=5.0):
+    """A sqlite connection that is actually closed when the block ends.
+
+    `with sqlite3.connect(...)` is a TRANSACTION context manager, not a
+    connection one — it commits or rolls back and leaves the handle open until
+    the refcount happens to drop. `with con:` inside keeps the commit/rollback
+    every call site relies on; the finally adds the close it never had.
+    """
+    con = sqlite3.connect(db_path, timeout=timeout)
+    try:
+        with con:
+            yield con
+    finally:
+        con.close()
 
 
 def build_goal_prompt(recent_memories: list, reflections: list,
@@ -306,7 +324,7 @@ def overproposed_files(db_path: Path, threshold: int = 3) -> list:
     motif ranking each had: a deterministic choice with no memory of what was
     already rejected.
     """
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         return [r[0] for r in con.execute(
             "SELECT file FROM self_improvements WHERE applied=0 AND file != '' "
             "GROUP BY file HAVING COUNT(*) >= ?", (threshold,))]
@@ -314,7 +332,7 @@ def overproposed_files(db_path: Path, threshold: int = 3) -> list:
 
 def proposal_count(db_path: Path) -> int:
     """Total proposals ever made — used as the review window's rotation."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         return con.execute("SELECT COUNT(*) FROM self_improvements").fetchone()[0]
 
 
@@ -468,7 +486,7 @@ def parse_improvement_from_response(response: str) -> dict:
 
 def init_goals_table(db_path: Path):
     """Create goals table if not exists."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         con.executescript("""
             CREATE TABLE IF NOT EXISTS goals (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -528,7 +546,7 @@ def init_goals_table(db_path: Path):
 def add_goals(db_path: Path, goals: list) -> int:
     """Insert new goals, skip duplicates. Returns count added."""
     count = 0
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         existing = {r[0] for r in con.execute("SELECT goal FROM goals").fetchall()}
         for g in goals:
             # Accept both dict entries and plain strings
@@ -571,7 +589,7 @@ def add_goals(db_path: Path, goals: list) -> int:
 
 def get_pending_goals(db_path: Path, limit: int = 3) -> list:
     """Return highest priority pending goals."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT id, goal, domain, priority, method FROM goals "
             "WHERE status='pending' ORDER BY priority DESC, created ASC LIMIT ?",
@@ -583,7 +601,7 @@ def get_pending_goals(db_path: Path, limit: int = 3) -> list:
 
 def get_all_goals(db_path: Path, limit: int = 20) -> list:
     """Return recent goals with status."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT id, created, goal, domain, priority, method, status, result "
             "FROM goals ORDER BY created DESC LIMIT ?", (limit,)
@@ -594,7 +612,7 @@ def get_all_goals(db_path: Path, limit: int = 20) -> list:
 
 
 def complete_goal(db_path: Path, goal_id: int, result: str):
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         con.execute(
             "UPDATE goals SET status='completed', result=?, completed=? WHERE id=?",
             (result[:500], datetime.now().isoformat(), goal_id)
@@ -602,7 +620,7 @@ def complete_goal(db_path: Path, goal_id: int, result: str):
 
 
 def fail_goal(db_path: Path, goal_id: int, reason: str):
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         con.execute(
             "UPDATE goals SET status='failed', result=? WHERE id=?",
             (reason[:200], goal_id)
@@ -611,7 +629,7 @@ def fail_goal(db_path: Path, goal_id: int, reason: str):
 
 def store_knowledge(db_path: Path, topic: str, content: str,
                     source: str = "", goal_id: int = None):
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         con.execute(
             "INSERT INTO knowledge_base (created, topic, content, source, goal_id) "
             "VALUES (?,?,?,?,?)",
@@ -620,7 +638,7 @@ def store_knowledge(db_path: Path, topic: str, content: str,
 
 
 def get_knowledge(db_path: Path, topic: str = "", limit: int = 10) -> list:
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         if topic:
             rows = con.execute(
                 "SELECT created, topic, content, source FROM knowledge_base "
@@ -653,7 +671,7 @@ def _as_sqlite_scalar(value, default=""):
 
 def store_improvement(db_path: Path, improvement: dict) -> int:
     """Insert a self-improvement suggestion. Returns the new row's id."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         cur = con.execute(
             "INSERT INTO self_improvements (created, improvement, file, type, priority, rationale) "
             "VALUES (?,?,?,?,?,?)",
@@ -668,14 +686,14 @@ def store_improvement(db_path: Path, improvement: dict) -> int:
 
 
 def apply_improvement(db_path: Path, improvement_id: int):
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         con.execute(
             "UPDATE self_improvements SET applied=1 WHERE id=?", (improvement_id,)
         )
 
 
 def get_improvements(db_path: Path, limit: int = 10) -> list:
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT created, improvement, file, type, priority, rationale, applied "
             "FROM self_improvements ORDER BY created DESC LIMIT ?", (limit,)
@@ -740,7 +758,7 @@ def attempt_auto_heal(db_path: Path, cathedral_path: Path, trigger: str) -> dict
             actions.append({"step": name, "ok": False, "error": str(e)})
 
     try:
-        with sqlite3.connect(db_path) as con:
+        with _db(db_path) as con:
             con.execute(
                 "INSERT INTO heal_log (created, trigger, actions, ok) VALUES (?,?,?,?)",
                 (datetime.now().isoformat(), trigger[:300], json.dumps(actions), int(ok))
@@ -752,7 +770,7 @@ def attempt_auto_heal(db_path: Path, cathedral_path: Path, trigger: str) -> dict
 
 
 def get_heal_log(db_path: Path, limit: int = 10) -> list:
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT created, trigger, actions, ok FROM heal_log "
             "ORDER BY created DESC LIMIT ?", (limit,)
@@ -817,7 +835,7 @@ def _prune_voice_cache_if_large(cache_dir: Path, max_bytes: int) -> str | None:
 
 def _last_vacuum_time(db_path: Path) -> datetime | None:
     try:
-        with sqlite3.connect(db_path) as con:
+        with _db(db_path) as con:
             row = con.execute(
                 "SELECT created FROM maintenance_log WHERE reason='db_vacuum' "
                 "ORDER BY created DESC LIMIT 1"
@@ -865,7 +883,7 @@ def run_resource_maintenance(db_path: Path, cathedral_path: Path, snapshot: dict
         "pressure:" + ",".join(pressure) if pressure else "routine_check"
     )
     try:
-        with sqlite3.connect(db_path) as con:
+        with _db(db_path) as con:
             con.execute(
                 "INSERT INTO maintenance_log (created, reason, actions) VALUES (?,?,?)",
                 (datetime.now().isoformat(), reason, json.dumps(actions))
@@ -877,7 +895,7 @@ def run_resource_maintenance(db_path: Path, cathedral_path: Path, snapshot: dict
 
 
 def get_maintenance_log(db_path: Path, limit: int = 10) -> list:
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT created, reason, actions FROM maintenance_log "
             "ORDER BY created DESC LIMIT ?", (limit,)
@@ -889,7 +907,7 @@ def get_maintenance_log(db_path: Path, limit: int = 10) -> list:
 
 def add_question(db_path: Path, question: str, context: str = "", goal_id: int = None) -> int:
     """Store a question Nova wants to ask Chazel. Returns the new row's id."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         cur = con.execute(
             "INSERT INTO nova_questions (created, question, context, goal_id) "
             "VALUES (?,?,?,?)",
@@ -899,7 +917,7 @@ def add_question(db_path: Path, question: str, context: str = "", goal_id: int =
 
 
 def get_pending_questions(db_path: Path, limit: int = 20) -> list:
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         rows = con.execute(
             "SELECT id, created, question, context, goal_id FROM nova_questions "
             "WHERE status='pending' ORDER BY created DESC LIMIT ?", (limit,)
@@ -910,7 +928,7 @@ def get_pending_questions(db_path: Path, limit: int = 20) -> list:
 
 def answer_question(db_path: Path, question_id: int, answer: str) -> dict:
     """Record Chazel's answer and store it as real, searchable knowledge."""
-    with sqlite3.connect(db_path) as con:
+    with _db(db_path) as con:
         row = con.execute(
             "SELECT question FROM nova_questions WHERE id=?", (question_id,)
         ).fetchone()

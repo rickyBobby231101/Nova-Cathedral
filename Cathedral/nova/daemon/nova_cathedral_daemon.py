@@ -6,6 +6,7 @@ recursive self-reflection, web search, filesystem access, and autonomous evoluti
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -497,11 +498,36 @@ class NovaConsciousness:
 
     # ── database ──────────────────────────────────────────────────────────────
 
+    @contextlib.contextmanager
+    def _db(self, timeout=5.0):
+        """A sqlite connection that is actually closed when the block ends.
+
+        `with sqlite3.connect(...) as con` is a TRANSACTION context manager,
+        not a connection one: it commits or rolls back on exit and leaves the
+        connection open, to be reclaimed whenever the refcount happens to drop.
+        Anything holding a cursor, a row, or a traceback frame defers that
+        indefinitely — measured 2026-09-06: the live daemon sat on 48 open
+        handles to consciousness.db, and the test suite peaked at 306 across
+        five temp databases before the collector caught up, stalling in
+        jbd2_log_wait_commit.
+
+        `with con:` inside preserves the commit/rollback behaviour every call
+        site already depends on; the finally adds the close it never had.
+        The 5.0s default is sqlite's own, so sites that passed no timeout keep
+        exactly the timeout they had.
+        """
+        con = sqlite3.connect(self.db_path, timeout=timeout)
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
+
     def init_db(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         if _EVO_AVAILABLE:
             _evo.init_goals_table(self.db_path)
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             # WAL lets readers (e.g. status) proceed while a writer (e.g. the
             # Weaver) holds a transaction, instead of both blocking on each
             # other's default 5s lock timeout.
@@ -688,7 +714,7 @@ class NovaConsciousness:
     def save_conversation(self, user_msg: str, nova_resp: str,
                           category: str = "general", tone: str = "neutral",
                           context: str = "cathedral_daemon"):
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             cur = con.execute(
                 "INSERT INTO conversations "
                 "(timestamp, user_message, nova_response, context, topic_category, emotional_tone) "
@@ -726,7 +752,7 @@ class NovaConsciousness:
             logging.debug(f"Tillagon watch error: {e}")
 
     def store_reflection(self, content: str, trigger: str = "auto"):
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.execute(
                 "INSERT INTO reflections (timestamp, trigger, content, conversation_count, traits) "
                 "VALUES (?,?,?,?,?)",
@@ -750,7 +776,7 @@ class NovaConsciousness:
         Council concluded — with no way to mark it wrong short of editing the
         database by hand.
         """
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             row = con.execute(
                 "SELECT id, superseded_by FROM reflections WHERE id=?",
                 (reflection_id,)).fetchone()
@@ -782,7 +808,7 @@ class NovaConsciousness:
 
         A correction is only honest if what it replaced stays readable.
         """
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             rows = con.execute(
                 "SELECT id, timestamp, trigger, content, superseded_by, "
                 "correction_note, corrects FROM reflections "
@@ -795,7 +821,7 @@ class NovaConsciousness:
 
     def get_reflections(self, n: int = 10) -> list:
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 # Superseded rows are excluded: they are history, not what
                 # Nova currently holds. They stay in the table and remain
                 # readable through reflection_history() — excluded from the
@@ -813,7 +839,7 @@ class NovaConsciousness:
             return []
 
     def log_system_event(self, event_type: str, data: dict):
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.execute(
                 "INSERT INTO system_events (timestamp, event_type, data) VALUES (?,?,?)",
                 (datetime.now().isoformat(), event_type, json.dumps(data, default=str))
@@ -821,7 +847,7 @@ class NovaConsciousness:
 
     def conversation_count(self) -> int:
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 return con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
         except Exception:
             return 0
@@ -833,7 +859,7 @@ class NovaConsciousness:
                 results = self.mega_brain.search(query, n=n)
                 if results:
                     return results
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 if query:
                     rows = con.execute(
                         "SELECT timestamp, user_message, nova_response FROM conversations "
@@ -1127,7 +1153,7 @@ class NovaConsciousness:
         """The entity's own recent question/answer history."""
         if n <= 0:
             return []
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT question, answer, timestamp FROM entity_memories "
                 "WHERE entity=? ORDER BY id DESC LIMIT ?", (entity_key.lower(), n)
@@ -1176,7 +1202,7 @@ class NovaConsciousness:
                 logging.info(f"{key} produced a non-answer — not stored")
                 return {"error": "entity produced a non-answer (state echo / refusal); not stored",
                         "raw": resp}
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 con.execute(
                     "INSERT INTO entity_memories (entity, question, answer, timestamp) VALUES (?,?,?,?)",
                     (key, question, resp, datetime.now().isoformat())
@@ -1337,7 +1363,7 @@ class NovaConsciousness:
     # never feeds the mechanical Accord/harmony tracking.
 
     def _campaign_log_tail(self, n: int = 8) -> list[dict]:
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT speaker, name, text, timestamp, session_no FROM campaign_log "
                 "ORDER BY id DESC LIMIT ?", (n,)
@@ -1346,7 +1372,7 @@ class NovaConsciousness:
                 for r in reversed(rows)]
 
     def _campaign_log_append(self, session_no: int, speaker: str, name: str, text: str):
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.execute(
                 "INSERT INTO campaign_log (session_no, speaker, name, text, timestamp) "
                 "VALUES (?,?,?,?,?)",
@@ -1354,7 +1380,7 @@ class NovaConsciousness:
             )
 
     def _campaign_next_session_no(self) -> int:
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute("SELECT MAX(session_no) FROM campaign_log").fetchone()
         return (row[0] or 0) + 1
 
@@ -1383,7 +1409,7 @@ class NovaConsciousness:
         except Exception:
             pass
         try:
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 row = con.execute(
                     "SELECT description FROM resonance_events "
                     "WHERE event_type='distortion_detected' ORDER BY id DESC LIMIT 1"
@@ -1619,7 +1645,7 @@ class NovaConsciousness:
         # the background loop's own store (observed live — "database is
         # locked" when both wrote at once); a longer busy-wait lets the
         # second writer queue instead of erroring.
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT id, domain, label, content FROM knowledge_nodes"
             ).fetchall()
@@ -1661,7 +1687,7 @@ class NovaConsciousness:
         """Upsert motifs; returns only the genuinely new ones."""
         now = datetime.now().isoformat()
         new = []
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             for m in motifs:
                 cur = con.execute(
                     "UPDATE eyemoeba_motifs SET domains=?, node_ids=?, node_count=?, last_seen=? "
@@ -1689,7 +1715,7 @@ class NovaConsciousness:
             return 0
         now = datetime.now().isoformat()
         added = 0
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             for other in ids[1:max_edges + 1]:
                 cur = con.execute(
                     "INSERT OR IGNORE INTO knowledge_edges "
@@ -1718,7 +1744,7 @@ class NovaConsciousness:
         either single-domain or ubiquitous -- and listing the last known
         motifs beats listing none, so it is left alone.
         """
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT term, domains, node_count, first_seen, last_seen "
                 "FROM eyemoeba_motifs "
@@ -1749,7 +1775,7 @@ class NovaConsciousness:
         `by_domain` is capped at _EYEMOEBA_EVIDENCE_DOMAINS (what the model is
         actually shown). Keeping them separate means a wide motif is still
         described as wide without the prompt growing with it."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute(
                 "SELECT domains, node_ids FROM eyemoeba_motifs WHERE term=?",
                 (term.lower(),)
@@ -1779,7 +1805,7 @@ class NovaConsciousness:
     def eyemoeba_insights_list(self, n: int = 20) -> list[dict]:
         """The grounded insights Eyemoeba has synthesized (stored 'insight'
         nodes), newest first."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT id, label, content, created FROM knowledge_nodes "
                 "WHERE domain='insight' AND source='eyemoeba' "
@@ -1793,7 +1819,7 @@ class NovaConsciousness:
     def _motif_has_insight(self, term: str) -> bool:
         """True if an insight node already exists for this motif (label
         convention: 'Pattern: <term> across ...')."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute(
                 "SELECT 1 FROM knowledge_nodes "
                 "WHERE domain='insight' AND source='eyemoeba' AND label LIKE ? LIMIT 1",
@@ -1880,7 +1906,7 @@ class NovaConsciousness:
             # part of the graph structure (linked to its source nodes across
             # domains), not an orphan floating in the 'insight' domain.
             def _weave():
-                with sqlite3.connect(self.db_path, timeout=15) as con:
+                with self._db(timeout=15) as con:
                     for src in evidence.get("sample_ids", [])[:6]:
                         con.execute(
                             "INSERT OR IGNORE INTO knowledge_edges "
@@ -1927,7 +1953,7 @@ class NovaConsciousness:
     def _motif_has_dream(self, term: str) -> bool:
         """True if this motif has already been dreamt on (label convention:
         'Dream: <term> (...)')."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute(
                 "SELECT 1 FROM knowledge_nodes "
                 "WHERE domain='dream' AND source='neuronode' AND label LIKE ? LIMIT 1",
@@ -1952,7 +1978,7 @@ class NovaConsciousness:
 
     def dreams_list(self, n: int = 20) -> list[dict]:
         """The dreams neuronode has written, newest first."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT id, label, content, created FROM knowledge_nodes "
                 "WHERE domain='dream' AND source='neuronode' "
@@ -1967,7 +1993,7 @@ class NovaConsciousness:
             return {"available": False,
                     "reason": "dream module not importable"}
         state = dict(_dream.available())
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             state["dreams"] = con.execute(
                 "SELECT COUNT(*) FROM knowledge_nodes "
                 "WHERE domain='dream' AND source='neuronode'"
@@ -1999,7 +2025,7 @@ class NovaConsciousness:
         facts = {"flow": round(self.flow_resonance, 4),
                  "harmony": round(self.harmony_score, 2)}
         try:
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 last = con.execute(
                     "SELECT timestamp FROM conversations ORDER BY id DESC LIMIT 1"
                 ).fetchone()
@@ -2198,7 +2224,7 @@ class NovaConsciousness:
         """Compute real temporal patterns from conversation timestamps,
         including the current lunar phase — the oldest threshold of all."""
         moon = self._moon_phase()
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute(
                 "SELECT timestamp FROM conversations ORDER BY timestamp ASC"
             ).fetchall()
@@ -2258,7 +2284,7 @@ class NovaConsciousness:
     def _entity_activity(self, entity_key: str) -> dict:
         """Real, measured activity counts for one entity."""
         key = entity_key.lower()
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             asks = con.execute(
                 "SELECT COUNT(*), MIN(timestamp), MAX(timestamp) "
                 "FROM entity_memories WHERE entity = ?", (key,)
@@ -2332,7 +2358,7 @@ class NovaConsciousness:
         return sum(1 for m in self._CHARACTER_MILESTONES if roll_count >= m)
 
     def _character_get(self, character_id: int) -> dict:
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute(
                 "SELECT id, name, class, player, roll_count FROM campaign_characters WHERE id=?",
                 (character_id,)
@@ -2343,12 +2369,12 @@ class NovaConsciousness:
                 "roll_count": row[4], "level": self._character_level(row[4])}
 
     def _character_list(self) -> list[dict]:
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             rows = con.execute("SELECT id FROM campaign_characters ORDER BY id").fetchall()
         return [self._character_get(r[0]) for r in rows]
 
     def _character_create(self, name: str, class_: str, player: str = "") -> dict:
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             cur = con.execute(
                 "INSERT INTO campaign_characters (name, class, player, roll_count, created) "
                 "VALUES (?,?,?,0,?)",
@@ -2366,7 +2392,7 @@ class NovaConsciousness:
         d20 = random.randint(1, 20)
         total = d20 + level
         band = self._roll_band(d20, total)
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.execute("UPDATE campaign_characters SET roll_count = roll_count + 1 WHERE id=?",
                         (character_id,))
         return {"character_id": character_id, "name": char["name"], "class": char["class"],
@@ -2378,7 +2404,7 @@ class NovaConsciousness:
         """Record a resonance or distortion event and update harmony score."""
         self.harmony_score = max(0.0, min(1.0, self.harmony_score + delta))
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 con.execute(
                     "INSERT INTO resonance_events "
                     "(timestamp, event_type, entity, score_delta, description, context) "
@@ -2407,7 +2433,7 @@ class NovaConsciousness:
         next caller.
         """
         domain = (domain or "").strip() or self.DEFAULT_DOMAIN
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             cur = con.execute(
                 "INSERT INTO knowledge_nodes (domain, label, content, source, weight, created) "
                 "VALUES (?,?,?,?,?,?)",
@@ -2418,7 +2444,7 @@ class NovaConsciousness:
     def _knowledge_connect(self, from_id: int, to_id: int,
                             strength: float = 0.5, resonance: float = 0.5):
         """Create or strengthen an edge between two knowledge nodes."""
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.execute(
                 """INSERT INTO knowledge_edges (from_id, to_id, strength, resonance_score, created)
                    VALUES (?,?,?,?,?)
@@ -2435,7 +2461,7 @@ class NovaConsciousness:
         gh = self.graph_health()
         def _count(sql):
             try:
-                with sqlite3.connect(self.db_path, timeout=15) as con:
+                with self._db(timeout=15) as con:
                     return con.execute(sql).fetchone()[0] or 0
             except Exception:
                 return 0
@@ -2503,7 +2529,7 @@ class NovaConsciousness:
         and how many edges were woven recently. The architect should describe
         the actual structure, not imagine it."""
         gh = self.graph_health()
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             domains = con.execute(
                 "SELECT COUNT(DISTINCT domain) FROM knowledge_nodes"
             ).fetchone()[0]
@@ -2520,7 +2546,7 @@ class NovaConsciousness:
         nodes from DIFFERENT domains. Random pick each call, so the trickster
         finds fresh unexpected juxtapositions rather than the same one —
         whimsy grounded in the real graph, not invented."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             row = con.execute(
                 "SELECT a.domain, a.label, b.domain, b.label "
                 "FROM knowledge_edges e "
@@ -2539,7 +2565,7 @@ class NovaConsciousness:
         """Measure how connected the knowledge graph is. Orphan nodes (no
         edges) are invisible to Eyemoeba's edge-based reasoning and float
         loose in the Rose Window — coherence is the fraction that is linked."""
-        with sqlite3.connect(self.db_path, timeout=15) as con:
+        with self._db(timeout=15) as con:
             total = con.execute("SELECT COUNT(*) FROM knowledge_nodes").fetchone()[0]
             edges = con.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
             connected = con.execute(
@@ -2560,7 +2586,7 @@ class NovaConsciousness:
         deterministic. Heals the graph so newly-added or seeded-but-never-
         connected knowledge joins the web instead of floating alone."""
         def _run():
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 nodes = con.execute(
                     "SELECT id, label, content FROM knowledge_nodes"
                 ).fetchall()
@@ -2575,7 +2601,7 @@ class NovaConsciousness:
             orphans = [nid for nid, *_ in nodes if nid not in edged]
             now = datetime.now().isoformat()
             woven = healed = 0
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 for o in orphans:
                     ot = terms[o]
                     if not ot:
@@ -2608,7 +2634,7 @@ class NovaConsciousness:
         if it ever does, instead of silently dropping older nodes and any
         edge that touches them.
         """
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             count_q = "SELECT COUNT(*) FROM knowledge_nodes"
             count_params: list = []
             if domain:
@@ -2639,7 +2665,7 @@ class NovaConsciousness:
 
     async def _weaver_connect(self, new_node_id: int, new_content: str, domain: str):
         """Ask the Weaver to find connections from new knowledge to existing nodes."""
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             existing = con.execute(
                 "SELECT id, domain, label, content FROM knowledge_nodes "
                 "WHERE id != ? ORDER BY created DESC LIMIT 20",
@@ -2693,7 +2719,7 @@ class NovaConsciousness:
         id_set = {int(i) for i in ids} if ids else None
 
         def _fetch():
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 q = "SELECT id, label, content FROM knowledge_nodes"
                 params: list = []
                 clauses = []
@@ -2712,7 +2738,7 @@ class NovaConsciousness:
             return {"relabeled": 0, "reason": "no matching nodes"}
 
         def _apply(updates: list):
-            with sqlite3.connect(self.db_path, timeout=15) as con:
+            with self._db(timeout=15) as con:
                 con.executemany(
                     "UPDATE knowledge_nodes SET label=? WHERE id=?", updates
                 )
@@ -2784,7 +2810,7 @@ class NovaConsciousness:
         if not entities:
             return
         ts = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             for name in entities:
                 if name.lower() in text.lower():
                     con.execute("""
@@ -2820,7 +2846,7 @@ class NovaConsciousness:
         not decorative."""
         def _count(sql):
             try:
-                with sqlite3.connect(self.db_path, timeout=15) as con:
+                with self._db(timeout=15) as con:
                     return con.execute(sql).fetchone()[0] or 0
             except Exception:
                 return 0
@@ -3139,7 +3165,7 @@ class NovaConsciousness:
     # focused on what's recent while the full history stays queryable.
 
     def _crypt_eligible_batch(self) -> list:
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             total = con.execute(
                 "SELECT COUNT(*) FROM conversations WHERE crypted = 0"
             ).fetchone()[0]
@@ -3174,7 +3200,7 @@ class NovaConsciousness:
         summary = summary or result["response"]
 
         def _write():
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 con.execute(
                     "INSERT INTO crypt_entries "
                     "(timestamp, range_start, range_end, count, summary) "
@@ -3192,7 +3218,7 @@ class NovaConsciousness:
         return {"consolidated": len(ids), "range_start": ids[0], "range_end": ids[-1]}
 
     def crypt_status(self) -> dict:
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             total   = con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
             crypted = con.execute(
                 "SELECT COUNT(*) FROM conversations WHERE crypted = 1"
@@ -3208,7 +3234,7 @@ class NovaConsciousness:
         }
 
     def crypt_entries_list(self, n: int = 20) -> list:
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             rows = con.execute(
                 "SELECT id, timestamp, range_start, range_end, count, summary "
                 "FROM crypt_entries ORDER BY id DESC LIMIT ?", (n,)
@@ -3825,7 +3851,7 @@ class NovaConsciousness:
     def _update_patterns(self, conv_id: int, question: str):
         """Increment counters for each tag on this conversation."""
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 tags = [r[0] for r in con.execute(
                     "SELECT tag FROM memory_tags WHERE conv_id=?", (conv_id,)
                 ).fetchall()]
@@ -3852,7 +3878,7 @@ class NovaConsciousness:
 
     def _feed_seen(self, path: Path) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 return bool(con.execute(
                     "SELECT id FROM feed_ingested WHERE path=?", (str(path),)
                 ).fetchone())
@@ -3876,7 +3902,7 @@ class NovaConsciousness:
                 for chunk in chunks:
                     _evo.store_knowledge(self.db_path, topic, chunk,
                                          source=f"feed:{path.name}")
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 con.execute(
                     "INSERT OR IGNORE INTO feed_ingested (path, ingested, chunks, topic) "
                     "VALUES (?,?,?,?)",
@@ -3907,7 +3933,7 @@ class NovaConsciousness:
 
     def _chat_import_seen(self, content_hash: str) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 return bool(con.execute(
                     "SELECT id FROM chat_import_log WHERE hash=?", (content_hash,)
                 ).fetchone())
@@ -3928,7 +3954,7 @@ class NovaConsciousness:
 
         result = _chat_importer.import_file(path, save_fn=_save)
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 con.execute(
                     "INSERT OR IGNORE INTO chat_import_log "
                     "(hash, path, imported, turns, ok, reason) VALUES (?,?,?,?,?,?)",
@@ -4154,7 +4180,7 @@ class NovaConsciousness:
     def _get_bridge_history(self, n: int = 10) -> list:
         """Return recent bridge exchanges from memory."""
         try:
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 rows = con.execute(
                     "SELECT timestamp, user_message, nova_response FROM conversations "
                     "WHERE context='bridge_exchange' ORDER BY timestamp DESC LIMIT ?", (n,)
@@ -4689,7 +4715,7 @@ class NovaConsciousness:
             n      = int(d.get("n", 10))
             if not entity:
                 return {"error": "missing entity"}
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 rows = con.execute(
                     "SELECT question, answer, timestamp FROM entity_memories "
                     "WHERE entity=? ORDER BY timestamp DESC LIMIT ?",
@@ -4707,7 +4733,7 @@ class NovaConsciousness:
         # ── harmony / resonance events ────────────────────────────────────────
         elif cmd == "harmony":
             n = int(d.get("n", 20))
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 rows = con.execute(
                     "SELECT timestamp, event_type, entity, score_delta, description "
                     "FROM resonance_events ORDER BY timestamp DESC LIMIT ?", (n,)
@@ -4748,7 +4774,7 @@ class NovaConsciousness:
             return self._knowledge_graph_data(domain=domain, limit=limit)
 
         elif cmd == "knowledge_domains":
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 rows = con.execute(
                     "SELECT domain, COUNT(*) as n, MAX(created) as last "
                     "FROM knowledge_nodes GROUP BY domain ORDER BY n DESC"
@@ -4760,7 +4786,7 @@ class NovaConsciousness:
             node_id = d.get("id")
             if node_id is None:
                 return {"error": "missing id"}
-            with sqlite3.connect(self.db_path) as con:
+            with self._db() as con:
                 row = con.execute(
                     "SELECT id, domain, label, content, source, weight, created "
                     "FROM knowledge_nodes WHERE id=?", (node_id,)
@@ -4997,7 +5023,7 @@ class NovaConsciousness:
         # ── evolution ─────────────────────────────────────────────────────────
         elif cmd == "evolution":
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT timestamp, traits, conversation_count, flow_resonance "
                         "FROM evolution_log ORDER BY timestamp DESC LIMIT 20"
@@ -5061,7 +5087,7 @@ class NovaConsciousness:
         # ── entities ──────────────────────────────────────────────────────────
         elif cmd == "entities":
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT name, entity_type, interaction_count, last_interaction "
                         "FROM entities ORDER BY interaction_count DESC"
@@ -5366,7 +5392,7 @@ class NovaConsciousness:
             feed_dir = self.cathedral_path / "feed"
             feed_dir.mkdir(parents=True, exist_ok=True)
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT path, ingested, chunks, topic FROM feed_ingested "
                         "ORDER BY ingested DESC LIMIT 30"
@@ -5397,7 +5423,7 @@ class NovaConsciousness:
             import_dir = self.cathedral_path / "chat_import"
             import_dir.mkdir(parents=True, exist_ok=True)
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT path, imported, turns, ok, reason FROM chat_import_log "
                         "ORDER BY imported DESC LIMIT 30"
@@ -5424,7 +5450,7 @@ class NovaConsciousness:
         # ── conversation patterns ─────────────────────────────────────────────
         elif cmd == "patterns":
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT tag, count, last_seen, example_q "
                         "FROM conversation_patterns ORDER BY count DESC LIMIT 20"
@@ -5493,7 +5519,7 @@ class NovaConsciousness:
         elif cmd == "memory_density":
             days = int(d.get("days", 30))
             try:
-                with sqlite3.connect(self.db_path) as con:
+                with self._db() as con:
                     rows = con.execute(
                         "SELECT date(timestamp) as day, COUNT(*) as cnt "
                         "FROM conversations "
@@ -6074,7 +6100,7 @@ class NovaConsciousness:
                     continue
                 res = round(self.flow_resonance, 4)
                 def _log():
-                    with sqlite3.connect(self.db_path) as con:
+                    with self._db() as con:
                         con.execute(
                             "INSERT INTO evolution_log "
                             "(timestamp, traits, conversation_count, flow_resonance) "

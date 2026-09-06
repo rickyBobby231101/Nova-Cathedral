@@ -212,9 +212,15 @@ def cmd_status(args) -> int:
     if db.is_file():
         import sqlite3
         try:
-            with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+            # `with sqlite3.connect(...)` manages the transaction, not the
+            # handle — close it explicitly so `nova status` never leaves a
+            # reader open against the live database.
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            try:
                 n = con.execute("SELECT count(*) FROM conversations").fetchone()[0]
                 k = con.execute("SELECT count(*) FROM knowledge_nodes").fetchone()[0]
+            finally:
+                con.close()
             print(f"  memory      ✓ {db.stat().st_size // 1024 // 1024} MB | "
                   f"{n} conversations | {k} knowledge nodes")
         except Exception as e:

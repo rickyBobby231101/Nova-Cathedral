@@ -11,6 +11,7 @@ Provides:
 
 import json
 import re
+import contextlib
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -20,6 +21,18 @@ from pathlib import Path
 class MegaBrainCore:
     """Enhanced memory operations on top of the existing consciousness.db."""
 
+    @contextlib.contextmanager
+    def _db(self, timeout=5.0):
+        """A sqlite connection that is actually closed — see the note in
+        nova_cathedral_daemon._db. `with sqlite3.connect(...)` only manages the
+        transaction, never the handle."""
+        con = sqlite3.connect(self.db_path, timeout=timeout)
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self._ensure_schema()
@@ -28,7 +41,7 @@ class MegaBrainCore:
 
     def _ensure_schema(self):
         """Add mega-brain tables if they don't exist yet."""
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.executescript("""
                 CREATE TABLE IF NOT EXISTS memory_tags (
                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +75,7 @@ class MegaBrainCore:
 
         cutoff = (datetime.now() - timedelta(days=days)).isoformat() if days else ""
 
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             # Support both column naming conventions
             cols = {r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()}
             q_col = "question"    if "question"    in cols else "user_message"
@@ -105,7 +118,7 @@ class MegaBrainCore:
         return scored[:n]
 
     def _recent(self, n: int) -> list:
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             cols = {r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()}
             q_col = "question"  if "question"  in cols else "user_message"
             a_col = "answer"    if "answer"    in cols else "nova_response"
@@ -154,7 +167,7 @@ class MegaBrainCore:
 
         if not tags:
             return
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.executemany(
                 "INSERT OR IGNORE INTO memory_tags (conv_id, tag, weight) VALUES (?,?,?)",
                 [(conv_id, tag, 1.0) for tag in tags]
@@ -167,7 +180,7 @@ class MegaBrainCore:
         if not entities:
             return
         ts = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             con.executemany(
                 "INSERT INTO memory_graph (entity, conv_id, mention, ts) VALUES (?,?,?,?)",
                 [(e, conv_id, text[:200], ts) for e in entities if e.lower() in text.lower()]
@@ -175,7 +188,7 @@ class MegaBrainCore:
 
     def entity_memories(self, entity: str, n: int = 10) -> list:
         """Return conversations that mention a specific entity."""
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             cols = {r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()}
             q_col = "c.question"     if "question"    in cols else "c.user_message"
             a_col = "c.answer"       if "answer"      in cols else "c.nova_response"
@@ -197,7 +210,7 @@ class MegaBrainCore:
         Does NOT delete anything — just reports candidates.
         """
         cutoff = (datetime.now() - timedelta(days=days_old)).isoformat()
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             old = con.execute(
                 "SELECT COUNT(*) FROM conversations WHERE timestamp < ?", (cutoff,)
             ).fetchone()[0]
@@ -208,7 +221,7 @@ class MegaBrainCore:
 
     def stats(self) -> dict:
         """Return memory statistics."""
-        with sqlite3.connect(self.db_path) as con:
+        with self._db() as con:
             total = con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
             tags  = con.execute(
                 "SELECT tag, COUNT(*) FROM memory_tags GROUP BY tag ORDER BY COUNT(*) DESC"
