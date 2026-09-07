@@ -36,6 +36,7 @@ NOVA_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(NOVA_ROOT / "modules"))
 
 import council_log                                  # noqa: E402
+import playground                                   # noqa: E402
 import providers                                    # noqa: E402
 
 SOCKET_PATH = "/tmp/nova_socket"
@@ -195,6 +196,59 @@ def cmd_council(args) -> int:
     return 0 if spoke else 1
 
 
+def cmd_build(args) -> int:
+    """Turn the seats loose on a build task, in a room they cannot leave.
+
+    Every seat gets the same task and writes into its own directory. Nothing
+    is executed, nothing is merged, and nothing reaches the live trees — the
+    output is files on disk for the Observer to read.
+    """
+    seats = args.seats.split(",") if args.seats else providers.LOCAL_COUNCIL
+    sid = playground.open_session(args.task)
+
+    print(f"Playground session {sid}")
+    print(f"Task: {args.task[:90]}{'…' if len(args.task) > 90 else ''}")
+    print(f"Seats: {', '.join(seats)}")
+    print()
+
+    brief = (
+        f"{args.task}\n\n"
+        "Write the code. Put each file in its own fenced block and name it on "
+        "the fence, like:\n"
+        "```python thing.py\n...\n```\n"
+        "Keep it small and complete. No preamble."
+    )
+
+    results, built = [], 0
+    for name in seats:
+        mod = providers.get(name)
+        if mod is None:
+            print(f"  ✗ {name}: unknown seat")
+            continue
+        ok, why = mod.available()
+        if not ok:
+            print(f"  ✗ {name}: {why[:60]}")
+            results.append({"seat": name, "status": "unavailable", "detail": why})
+            continue
+        print(f"  → {name} …", end=" ", flush=True)
+        r = providers.ask(name, brief)
+        if "error" in r:
+            print(f"✗ {r['error'][:60]}")
+            results.append({"seat": name, "status": "error", "detail": r["error"]})
+            continue
+        w = playground.write_seat(sid, name, r["response"])
+        print(f"✓ {', '.join(w.get('files', [])) or w.get('error', '?')}")
+        results.append({"seat": name, "status": "ok", "model": r.get("model"),
+                        "latency": r.get("latency"), **w})
+        built += 1
+
+    d = playground.close_session(sid, args.task, results)
+    print(f"\n{built} of {len(seats)} seats built something")
+    print(f"  {d}")
+    print("\n  Nothing here has been executed, reviewed, or merged.")
+    return 0 if built else 1
+
+
 def cmd_status(args) -> int:
     print("NOVA CATHEDRAL — STATUS\n")
 
@@ -293,6 +347,11 @@ def main() -> int:
     dec.add_argument("session_id")
     dec.add_argument("decision")
     dec.set_defaults(fn=cmd_decide)
+
+    b = sub.add_parser("build", help="turn the seats loose in the playground")
+    b.add_argument("task")
+    b.add_argument("--seats", help="comma-separated subset (default: local only)")
+    b.set_defaults(fn=cmd_build)
 
     s = sub.add_parser("status", help="daemon, ollama, seats, memory")
     s.set_defaults(fn=cmd_status)
